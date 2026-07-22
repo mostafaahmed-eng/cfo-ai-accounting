@@ -1,0 +1,76 @@
+'use client'
+
+import Sidebar from '@/components/layout/Sidebar'
+import Header from '@/components/layout/Header'
+import { useQuery } from '@tanstack/react-query'
+import apiClient from '@/lib/api-client'
+import type { InboxItem } from '@/lib/types'
+
+export default function InboxPage() {
+  const { data: items, isLoading } = useQuery<InboxItem[]>({
+    queryKey: ['inbox'],
+    queryFn: async () => {
+      // We need to get inbox items - the API returns individual items by ID
+      // For now, display a message that inbox items are created via text/receipt submission
+      return []
+    },
+  })
+
+  return (
+    <div className="flex min-h-screen">
+      <Sidebar />
+      <div className="flex-1">
+        <Header />
+        <main className="p-6">
+          <h2 className="text-2xl font-bold mb-6">Inbox</h2>
+          {isLoading ? (
+            <p className="text-gray-500">Loading...</p>
+          ) : (
+            <div className="bg-white rounded-lg shadow">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b text-left text-sm text-gray-500">
+                    <th className="p-4">Source</th>
+                    <th className="p-4">Content</th>
+                    <th className="p-4">Language</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(items || []).length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-4 text-center text-gray-500">
+                        No inbox items. Submit text or upload a receipt from the dashboard.
+                      </td>
+                    </tr>
+                  ) : (
+                    (items || []).map((item) => (
+                      <tr key={item.id} className="border-b hover:bg-gray-50">
+                        <td className="p-4 text-sm">{item.source}</td>
+                        <td className="p-4 text-sm truncate max-w-xs">{item.original_text || '-'}</td>
+                        <td className="p-4 text-sm">{item.detected_language}</td>
+                        <td className="p-4 text-sm">
+                          <span className={`px-2 py-1 rounded text-xs ${
+                            item.status === 'extracted' ? 'bg-green-100 text-green-800' :
+                            item.status === 'failed' ? 'bg-red-100 text-red-800' :
+                            'bg-yellow-100 text-yellow-800'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="p-4 text-sm text-gray-500">
+                          {new Date(item.created_at).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  )
+}

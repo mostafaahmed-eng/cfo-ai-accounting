@@ -1,0 +1,23 @@
+from pydantic import BaseModel
+from uuid import UUID
+from datetime import datetime
+
+
+class ApprovalAction(BaseModel):
+    comment: str | None = None
+
+
+class ApprovalResponse(BaseModel):
+    id: UUID
+    company_id: UUID
+    entity_type: str
+    entity_id: str
+    requested_by: UUID | None
+    assigned_to: UUID | None
+    status: str
+    comment: str | None
+    resolved_by: UUID | None
+    resolved_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

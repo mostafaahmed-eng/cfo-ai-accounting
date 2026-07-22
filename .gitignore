@@ -1,0 +1,100 @@
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+.eggs/
+*.whl
+
+# Virtual environments
+.env
+.venv/
+venv/
+ENV/
+
+# ===========================
+# Node.js / Frontend
+# ===========================
+node_modules/
+.next/
+out/
+.vercel/
+
+# ===========================
+# Testing / Coverage
+# ===========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+coverage/
+coverage.xml
+*.cover
+
+# ===========================
+# Environment / Secrets
+# ===========================
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ===========================
+# IDE
+# ===========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===========================
+# Docker
+# ===========================
+*.log
+docker-compose.override.yml
+Dockerfile.*
+
+# ===========================
+# OS
+# ===========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===========================
+# Secrets / Certs
+# ===========================
+*.pem
+*.key
+*.cert
+
+# ===========================
+# Build artifacts
+# ===========================
+*.tsbuildinfo
+next-env.d.ts
+
+# ===========================
+# Celery
+# ===========================
+celerybeat-schedule
+celerybeat.pid
+
+# ===========================
+# Temporary files
+# ===========================
+*.tmp
+*.temp
+*.bak
+*.orig

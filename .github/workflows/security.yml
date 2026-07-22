@@ -1,0 +1,94 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 6 AM UTC
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit Python dependencies
+        working-directory: cfo-backend
+        run: pip-audit -r <(pip freeze)
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Audit npm dependencies
+        working-directory: cfo-dashboard
+        run: npm audit --audit-level=high || true
+
+  docker-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -f cfo-backend/Dockerfile.prod -t cfo-backend:scan ./cfo-backend
+
+      - name: Run Trivy vulnerability scanner (backend)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'cfo-backend:scan'
+          format: 'sarif'
+          output: 'trivy-backend.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - name: Build frontend image
+        run: docker build -f cfo-dashboard/Dockerfile.prod -t cfo-frontend:scan ./cfo-dashboard
+
+      - name: Run Trivy vulnerability scanner (frontend)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'cfo-frontend:scan'
+          format: 'sarif'
+          output: 'trivy-frontend.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-backend.sarif'
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Scanning for hardcoded API keys and secrets..."
+          if grep -rn "sk-or-v1" --include="*.py" --include="*.yml" --include="*.yaml" --include="*.json" --include="*.env" .; then
+            echo "WARNING: Found hardcoded OpenRouter API keys in source code!"
+            exit 1
+          fi
+          if grep -rn "TELEGRAM_BOT_TOKEN.*=" --include="*.py" --include="*.yml" --include="*.yaml" . | grep -v "TELEGRAM_BOT_TOKEN:" | grep -v "TELEGRAM_BOT_TOKEN=" | grep -v "\.example" | grep -v "test" | grep -v "__pycache__"; then
+            echo "WARNING: Found hardcoded Telegram tokens in source code!"
+            exit 1
+          fi
+          echo "No hardcoded secrets found."

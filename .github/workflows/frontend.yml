@@ -1,0 +1,68 @@
+name: Frontend
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'cfo-dashboard/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'cfo-dashboard/**'
+
+jobs:
+  frontend-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: cfo-dashboard/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cfo-dashboard
+        run: npm ci
+
+      - name: TypeScript type check
+        working-directory: cfo-dashboard
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        working-directory: cfo-dashboard
+        run: npm run lint
+
+      - name: Build
+        working-directory: cfo-dashboard
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost/api/v1
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: frontend-checks
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build frontend Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./cfo-dashboard
+          file: ./cfo-dashboard/Dockerfile.prod
+          push: false
+          tags: cfo-frontend:ci
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=http://localhost/api/v1
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
