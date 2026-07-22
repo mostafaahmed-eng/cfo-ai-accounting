@@ -6,19 +6,38 @@ WESTERN_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 ARABIC_DIGITS = str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")
 
 CURRENCY_SYMBOLS = {
-    "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY",
-    "₹": "INR", "ج.م": "EGP", "ر.س": "SAR", "د.إ": "AED",
-    "AED": "AED", "SAR": "SAR", "EGP": "EGP",
+    "$": "USD",
+    "€": "EUR",
+    "£": "GBP",
+    "¥": "JPY",
+    "₹": "INR",
+    "ج.م": "EGP",
+    "ر.س": "SAR",
+    "د.إ": "AED",
+    "AED": "AED",
+    "SAR": "SAR",
+    "EGP": "EGP",
 }
 
 CURRENCY_KEYWORDS = {
-    "dollar": "USD", "dollars": "USD", "usd": "USD",
-    "euro": "EUR", "euros": "EUR", "eur": "EUR",
-    "pound": "GBP", "pounds": "GBP", "gbp": "GBP",
-    "yen": "JPY", "jpy": "JPY",
-    "rupee": "INR", "rupees": "INR", "inr": "INR",
-    "جنيه": "EGP", "جنيهات": "EGP",
-    "ريال": "SAR", "ريالات": "SAR",
+    "dollar": "USD",
+    "dollars": "USD",
+    "usd": "USD",
+    "euro": "EUR",
+    "euros": "EUR",
+    "eur": "EUR",
+    "pound": "GBP",
+    "pounds": "GBP",
+    "gbp": "GBP",
+    "yen": "JPY",
+    "jpy": "JPY",
+    "rupee": "INR",
+    "rupees": "INR",
+    "inr": "INR",
+    "جنيه": "EGP",
+    "جنيهات": "EGP",
+    "ريال": "SAR",
+    "ريالات": "SAR",
     "درهم": "AED",
 }
 

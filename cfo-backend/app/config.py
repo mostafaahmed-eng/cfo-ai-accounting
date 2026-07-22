@@ -22,7 +22,10 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = ""
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
     ALLOWED_MIME_TYPES: list[str] = [
-        "image/jpeg", "image/png", "image/webp", "application/pdf"
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "application/pdf",
     ]
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

@@ -19,8 +19,11 @@ class TestAIOutputValidation:
             "reference_number": None,
             "language": "en",
             "confidence": {
-                "overall": 0.91, "amount": 0.99, "currency": 0.98,
-                "date": 0.72, "category": 0.88,
+                "overall": 0.91,
+                "amount": 0.99,
+                "currency": 0.98,
+                "date": 0.72,
+                "category": 0.88,
             },
             "needs_clarification": True,
             "questions": ["Which card or bank account was used?"],
@@ -48,7 +51,13 @@ class TestAIOutputValidation:
             "description": "Test",
             "category_hint": "Test",
             "language": "en",
-            "confidence": {"overall": 0.9, "amount": 0.9, "currency": 0.9, "date": 0.9, "category": 0.9},
+            "confidence": {
+                "overall": 0.9,
+                "amount": 0.9,
+                "currency": 0.9,
+                "date": 0.9,
+                "category": 0.9,
+            },
         }
         # This should still work as document_type is just a string
         result = ExtractionResult(**data)
@@ -66,7 +75,13 @@ class TestAIOutputValidation:
             "description": "Test",
             "category_hint": "Test",
             "language": "en",
-            "confidence": {"overall": 0.5, "amount": 0.5, "currency": 0.5, "date": 0.5, "category": 0.5},
+            "confidence": {
+                "overall": 0.5,
+                "amount": 0.5,
+                "currency": 0.5,
+                "date": 0.5,
+                "category": 0.5,
+            },
         }
         result = ExtractionResult(**data)
         assert result.amount == 0.0
@@ -83,7 +98,13 @@ class TestAIOutputValidation:
             "description": "Test",
             "category_hint": "Test",
             "language": "en",
-            "confidence": {"overall": 0.95, "amount": 1.0, "currency": 1.0, "date": 0.8, "category": 0.9},
+            "confidence": {
+                "overall": 0.95,
+                "amount": 1.0,
+                "currency": 1.0,
+                "date": 0.8,
+                "category": 0.9,
+            },
         }
         result = ExtractionResult(**data)
         assert result.confidence.overall == 0.95

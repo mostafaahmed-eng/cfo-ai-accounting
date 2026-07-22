@@ -1,9 +1,6 @@
 import pytest
 from uuid import uuid4
 from datetime import datetime
-from httpx import AsyncClient
-from app.database import Base, get_db
-from app.main import app
 from app.models.user import User
 from app.models.company import Company, CompanyMember
 from app.enums import UserStatus
@@ -149,10 +146,13 @@ async def test_company_id_via_api(client, db_session):
     await db_session.flush()
 
     # Login
-    login_resp = await client.post("/api/v1/auth/login", json={
-        "email": "api@example.com",
-        "password": "testpass",
-    })
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "api@example.com",
+            "password": "testpass",
+        },
+    )
     assert login_resp.status_code == 200
     token = login_resp.json()["access_token"]
 

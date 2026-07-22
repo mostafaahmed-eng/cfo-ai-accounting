@@ -5,7 +5,13 @@ from datetime import date
 from app.models.exchange_rate import ExchangeRate
 
 
-async def get_exchange_rate(db: AsyncSession, company_id: str, base_currency: str, quote_currency: str, on_date: date | None = None) -> Decimal:
+async def get_exchange_rate(
+    db: AsyncSession,
+    company_id: str,
+    base_currency: str,
+    quote_currency: str,
+    on_date: date | None = None,
+) -> Decimal:
     if base_currency == quote_currency:
         return Decimal("1.0")
 

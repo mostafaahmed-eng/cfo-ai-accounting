@@ -22,14 +22,18 @@ class TelegramConnection(BaseModel, TimestampMixin):
 class TelegramUpdate(BaseModel, TimestampMixin):
     __tablename__ = "telegram_updates"
 
-    connection_id = Column(UUID(as_uuid=True), ForeignKey("telegram_connections.id"), nullable=False)
+    connection_id = Column(
+        UUID(as_uuid=True), ForeignKey("telegram_connections.id"), nullable=False
+    )
     telegram_update_id = Column(BigInteger, nullable=False)
     message_id = Column(BigInteger, nullable=True)
     chat_id = Column(BigInteger, nullable=False)
     update_type = Column(String(50), nullable=False)
     payload = Column(JSONB, nullable=False)
     processing_status = Column(String(20), nullable=False, default="received")
-    inbox_item_id = Column(UUID(as_uuid=True), ForeignKey("inbox_items.id"), nullable=True)
+    inbox_item_id = Column(
+        UUID(as_uuid=True), ForeignKey("inbox_items.id"), nullable=True
+    )
 
     connection = relationship("TelegramConnection", lazy="noload")
     inbox_item = relationship("InboxItem", lazy="noload")

@@ -19,7 +19,11 @@ for u in results:
     cb = u.get("callback_query")
     msg = u.get("message")
     if cb:
-        print(f"  {uid} CALLBACK data={cb.get('data')} from={cb['from'].get('username','?')}")
+        print(
+            f"  {uid} CALLBACK data={cb.get('data')} from={cb['from'].get('username', '?')}"
+        )
     elif msg:
         txt = msg.get("text", "")
-        print(f"  {uid} MESSAGE text={txt[:80]} from={msg['from'].get('username','?')}")
+        print(
+            f"  {uid} MESSAGE text={txt[:80]} from={msg['from'].get('username', '?')}"
+        )

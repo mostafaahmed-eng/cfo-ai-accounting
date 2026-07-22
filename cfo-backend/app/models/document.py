@@ -8,7 +8,9 @@ class Document(BaseModel, TimestampMixin):
     __tablename__ = "documents"
 
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
-    inbox_item_id = Column(UUID(as_uuid=True), ForeignKey("inbox_items.id"), nullable=True)
+    inbox_item_id = Column(
+        UUID(as_uuid=True), ForeignKey("inbox_items.id"), nullable=True
+    )
     storage_key = Column(String(500), nullable=False)
     original_name = Column(String(255), nullable=False)
     mime_type = Column(String(100), nullable=False)

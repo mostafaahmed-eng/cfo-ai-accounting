@@ -18,9 +18,11 @@ async def list_audit_logs(
     limit: int = 100,
 ):
     result = await db.execute(
-        select(AuditLog).where(AuditLog.company_id == company_id)
+        select(AuditLog)
+        .where(AuditLog.company_id == company_id)
         .order_by(AuditLog.created_at.desc())
-        .offset(skip).limit(limit)
+        .offset(skip)
+        .limit(limit)
     )
     logs = result.scalars().all()
     return [

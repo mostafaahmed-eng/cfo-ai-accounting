@@ -16,7 +16,10 @@ async def test_upload_receipt_and_correct_vendor(client):
     assert upload_resp.status_code in (401, 422)
 
     # Verify draft update requires auth
-    update_resp = await client.patch("/api/v1/draft-transactions/test-id", json={
-        "description": "Corrected vendor name",
-    })
+    update_resp = await client.patch(
+        "/api/v1/draft-transactions/test-id",
+        json={
+            "description": "Corrected vendor name",
+        },
+    )
     assert update_resp.status_code == 401

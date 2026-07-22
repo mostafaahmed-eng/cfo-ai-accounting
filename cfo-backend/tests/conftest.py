@@ -15,6 +15,7 @@ TEST_DATABASE_URL = os.environ.get(
 _pg_available = False
 try:
     import urllib.parse
+
     parsed = urllib.parse.urlparse(TEST_DATABASE_URL)
     _pg_host = parsed.hostname or "localhost"
     _pg_port = parsed.port or 5432
@@ -41,6 +42,7 @@ async def _engine():
 
     try:
         import asyncpg
+
         root_pg_url = root_url.replace("+asyncpg", "")
         conn = await asyncpg.connect(root_pg_url)
         row = await conn.fetchrow(
@@ -77,6 +79,7 @@ async def db_session(_engine):
 async def client(db_session):
     async def override_get_db():
         yield db_session
+
     app.dependency_overrides[get_db] = override_get_db
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

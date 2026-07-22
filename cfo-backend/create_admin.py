@@ -7,6 +7,7 @@ Usage:
 
 Requires DATABASE_URL environment variable or .env file to be configured.
 """
+
 import asyncio
 import argparse
 import sys
@@ -23,6 +24,7 @@ async def create_admin(email: str, password: str, name: str):
 
     async with async_session() as session:
         from sqlalchemy import select
+
         result = await session.execute(select(User).where(User.email == email))
         existing = result.scalar_one_or_none()
         if existing:
@@ -38,7 +40,7 @@ async def create_admin(email: str, password: str, name: str):
         )
         session.add(user)
         await session.commit()
-        print(f"Admin user created successfully:")
+        print("Admin user created successfully:")
         print(f"  Email:    {email}")
         print(f"  Password: {password}")
         print(f"  ID:       {user.id}")
@@ -46,9 +48,19 @@ async def create_admin(email: str, password: str, name: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Create an admin user for CFO Manager")
-    parser.add_argument("--email", default="admin@example.com", help="Admin email (default: admin@example.com)")
-    parser.add_argument("--password", default="changeme123", help="Admin password (default: changeme123)")
-    parser.add_argument("--name", default="Admin", help="Admin display name (default: Admin)")
+    parser.add_argument(
+        "--email",
+        default="admin@example.com",
+        help="Admin email (default: admin@example.com)",
+    )
+    parser.add_argument(
+        "--password",
+        default="changeme123",
+        help="Admin password (default: changeme123)",
+    )
+    parser.add_argument(
+        "--name", default="Admin", help="Admin display name (default: Admin)"
+    )
     args = parser.parse_args()
 
     asyncio.run(create_admin(args.email, args.password, args.name))

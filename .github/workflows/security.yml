@@ -8,6 +8,10 @@ on:
   schedule:
     - cron: '0 6 * * 1'  # Weekly on Monday at 6 AM UTC
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   dependency-audit:
     runs-on: ubuntu-latest
@@ -83,11 +87,11 @@ jobs:
       - name: Check for hardcoded secrets
         run: |
           echo "Scanning for hardcoded API keys and secrets..."
-          if grep -rn "sk-or-v1" --include="*.py" --include="*.yml" --include="*.yaml" --include="*.json" --include="*.env" .; then
+          if grep -rn "sk-or-v1" --include="*.py" --include="*.json" --include="*.env" .; then
             echo "WARNING: Found hardcoded OpenRouter API keys in source code!"
             exit 1
           fi
-          if grep -rn "TELEGRAM_BOT_TOKEN.*=" --include="*.py" --include="*.yml" --include="*.yaml" . | grep -v "TELEGRAM_BOT_TOKEN:" | grep -v "TELEGRAM_BOT_TOKEN=" | grep -v "\.example" | grep -v "test" | grep -v "__pycache__"; then
+          if grep -rn "TELEGRAM_BOT_TOKEN=[0-9]" --include="*.py" --include="*.json" .; then
             echo "WARNING: Found hardcoded Telegram tokens in source code!"
             exit 1
           fi

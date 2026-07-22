@@ -22,29 +22,47 @@ async def trigger_extraction(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(InboxItem).where(InboxItem.id == inbox_item_id, InboxItem.company_id == company_id))
+    result = await db.execute(
+        select(InboxItem).where(
+            InboxItem.id == inbox_item_id, InboxItem.company_id == company_id
+        )
+    )
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
     if not item.original_text:
         raise HTTPException(status_code=400, detail="No text content to extract")
 
-    extraction_result = await extract_from_text(item.original_text, item.detected_language or "en")
+    extraction_result = await extract_from_text(
+        item.original_text, item.detected_language or "en"
+    )
 
     from app.schemas.ai_extraction import ExtractionResult
+
     validated = None
     try:
-        validated = ExtractionResult.model_validate(extraction_result.get("extracted", {}))
+        validated = ExtractionResult.model_validate(
+            extraction_result.get("extracted", {})
+        )
     except Exception:
         pass
 
     settings = get_settings()
     extraction = AIExtraction(
-        id=uuid4(), company_id=company_id, inbox_item_id=inbox_item_id,
-        provider="openrouter", model=settings.OPENROUTER_MODEL, prompt_version="v1.0",
-        request_payload={"text": item.original_text, "language": item.detected_language},
+        id=uuid4(),
+        company_id=company_id,
+        inbox_item_id=inbox_item_id,
+        provider="openrouter",
+        model=settings.OPENROUTER_MODEL,
+        prompt_version="v1.0",
+        request_payload={
+            "text": item.original_text,
+            "language": item.detected_language,
+        },
         raw_response=extraction_result.get("raw_response", {}),
-        validated_result=validated.model_dump(mode="json") if validated else extraction_result.get("extracted"),
+        validated_result=validated.model_dump(mode="json")
+        if validated
+        else extraction_result.get("extracted"),
         status="succeeded" if validated else "partial",
         input_tokens=extraction_result.get("input_tokens"),
         output_tokens=extraction_result.get("output_tokens"),
@@ -65,7 +83,11 @@ async def trigger_extraction_async(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(InboxItem).where(InboxItem.id == inbox_item_id, InboxItem.company_id == company_id))
+    result = await db.execute(
+        select(InboxItem).where(
+            InboxItem.id == inbox_item_id, InboxItem.company_id == company_id
+        )
+    )
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
@@ -84,9 +106,11 @@ async def list_extractions(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(AIExtraction).where(
+        select(AIExtraction)
+        .where(
             AIExtraction.inbox_item_id == inbox_item_id,
             AIExtraction.company_id == company_id,
-        ).order_by(AIExtraction.created_at.desc())
+        )
+        .order_by(AIExtraction.created_at.desc())
     )
     return [AIExtractionResponse.model_validate(e) for e in result.scalars().all()]

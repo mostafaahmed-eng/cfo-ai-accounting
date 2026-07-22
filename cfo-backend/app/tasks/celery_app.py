@@ -8,15 +8,17 @@ celery_app = Celery(
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
 )
-celery_app.autodiscover_tasks([
-    "app.tasks.receipt_processing",
-    "app.tasks.ai_extraction",
-    "app.tasks.duplicate_detection",
-    "app.tasks.telegram_responses",
-    "app.tasks.journal_posting",
-    "app.tasks.report_generation",
-    "app.tasks.notifications",
-])
+celery_app.autodiscover_tasks(
+    [
+        "app.tasks.receipt_processing",
+        "app.tasks.ai_extraction",
+        "app.tasks.duplicate_detection",
+        "app.tasks.telegram_responses",
+        "app.tasks.journal_posting",
+        "app.tasks.report_generation",
+        "app.tasks.notifications",
+    ]
+)
 
 celery_app.conf.task_routes = {
     "app.tasks.receipt_processing.*": {"queue": "receipt-processing"},

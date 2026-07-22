@@ -22,11 +22,15 @@ class StorageClient:
         return self._s3
 
     async def upload_file(self, key: str, data: bytes, content_type: str):
-        self.s3.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
+        self.s3.put_object(
+            Bucket=self.bucket, Key=key, Body=data, ContentType=content_type
+        )
 
     async def get_signed_url(self, key: str, expires_in: int = 3600) -> str:
         return self.s3.generate_presigned_url(
-            "get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=expires_in
+            "get_object",
+            Params={"Bucket": self.bucket, "Key": key},
+            ExpiresIn=expires_in,
         )
 
     async def delete_file(self, key: str):

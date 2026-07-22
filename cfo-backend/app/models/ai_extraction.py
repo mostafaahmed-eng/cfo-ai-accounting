@@ -8,7 +8,9 @@ class AIExtraction(BaseModel, TimestampMixin):
     __tablename__ = "ai_extractions"
 
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
-    inbox_item_id = Column(UUID(as_uuid=True), ForeignKey("inbox_items.id"), nullable=False)
+    inbox_item_id = Column(
+        UUID(as_uuid=True), ForeignKey("inbox_items.id"), nullable=False
+    )
     provider = Column(String(50), nullable=False)
     model = Column(String(100), nullable=False)
     prompt_version = Column(String(50), nullable=False)

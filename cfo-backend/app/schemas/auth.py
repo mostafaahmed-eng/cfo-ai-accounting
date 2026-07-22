@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
-from app.enums import UserRole, Language, UserStatus
+from app.enums import Language, UserStatus
 
 
 class LoginRequest(BaseModel):

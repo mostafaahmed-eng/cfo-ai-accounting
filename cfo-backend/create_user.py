@@ -9,6 +9,7 @@ from app.enums import UserStatus, Language
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
 async def main():
     async with async_session() as session:
         user = User(
@@ -25,5 +26,6 @@ async def main():
         print("✅ User created successfully")
         print("Email: admin@example.com")
         print("Password: changeme123")
+
 
 asyncio.run(main())

@@ -18,10 +18,12 @@ async def list_notifications(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Notification).where(
+        select(Notification)
+        .where(
             Notification.company_id == company_id,
             Notification.user_id == str(user.id),
-        ).order_by(Notification.created_at.desc())
+        )
+        .order_by(Notification.created_at.desc())
     )
     return [NotificationResponse.model_validate(n) for n in result.scalars().all()]
 

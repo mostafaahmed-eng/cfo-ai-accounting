@@ -22,8 +22,12 @@ class InboxItem(BaseModel, TimestampMixin):
 
     company = relationship("Company", back_populates="inbox_items")
     submitter = relationship("User", foreign_keys=[submitted_by], lazy="noload")
-    ai_extractions = relationship("AIExtraction", back_populates="inbox_item", lazy="noload")
+    ai_extractions = relationship(
+        "AIExtraction", back_populates="inbox_item", lazy="noload"
+    )
     documents = relationship("Document", back_populates="inbox_item", lazy="noload")
-    draft_transactions = relationship("DraftTransaction", back_populates="inbox_item", lazy="noload")
+    draft_transactions = relationship(
+        "DraftTransaction", back_populates="inbox_item", lazy="noload"
+    )
 
     __table_args__ = (UniqueConstraint("company_id", "source", "idempotency_key"),)

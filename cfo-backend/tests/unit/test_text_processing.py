@@ -1,6 +1,5 @@
 from app.core.text_processing import (
     normalize_arabic_digits,
-    normalize_western_digits,
     detect_language,
     extract_currency,
     extract_amount,

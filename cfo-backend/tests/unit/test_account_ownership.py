@@ -1,6 +1,3 @@
-import pytest
-
-
 class TestCompanyOwnership:
     def test_different_companies_are_isolated(self):
         company_id_1 = "company-1"

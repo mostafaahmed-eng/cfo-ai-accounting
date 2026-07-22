@@ -15,14 +15,17 @@ async def test_telegram_transaction_approval(client):
     """
     # When TELEGRAM_WEBHOOK_SECRET is empty (local dev), webhook accepts without secret
     # When TELEGRAM_WEBHOOK_SECRET is set, missing/wrong secret returns 403
-    webhook_resp = await client.post("/api/v1/telegram/webhook", json={
-        "update_id": 99999,
-        "message": {
-            "message_id": 1,
-            "chat": {"id": 12345},
-            "text": "I spent $50 for coffee",
+    webhook_resp = await client.post(
+        "/api/v1/telegram/webhook",
+        json={
+            "update_id": 99999,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 12345},
+                "text": "I spent $50 for coffee",
+            },
         },
-    })
+    )
     assert webhook_resp.status_code in (200, 403)
 
     # Verify integration status requires auth

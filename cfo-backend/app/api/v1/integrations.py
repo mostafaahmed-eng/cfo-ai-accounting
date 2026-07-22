@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import uuid4
@@ -6,7 +6,7 @@ from app.database import get_db
 from app.config import get_settings
 from app.models.telegram import TelegramConnection
 from app.models.user import User
-from app.schemas.telegram import TelegramConnectRequest, TelegramStatusResponse
+from app.schemas.telegram import TelegramStatusResponse
 from app.dependencies import get_current_user, get_current_company_id
 
 router = APIRouter()
@@ -22,20 +22,34 @@ async def connect_telegram(
     result = await db.execute(
         select(TelegramConnection).where(
             TelegramConnection.company_id == company_id,
-            TelegramConnection.status == "active"
+            TelegramConnection.status == "active",
         )
     )
     existing = result.scalar_one_or_none()
     if existing:
-        return TelegramStatusResponse(connected=True, bot_username=existing.bot_username, chat_id=existing.telegram_chat_id, status="active")
+        return TelegramStatusResponse(
+            connected=True,
+            bot_username=existing.bot_username,
+            chat_id=existing.telegram_chat_id,
+            status="active",
+        )
 
     connection = TelegramConnection(
-        id=uuid4(), company_id=company_id, bot_username=settings.TELEGRAM_BOT_USERNAME,
-        telegram_chat_id=0, connected_by=str(user.id), status="active",
+        id=uuid4(),
+        company_id=company_id,
+        bot_username=settings.TELEGRAM_BOT_USERNAME,
+        telegram_chat_id=0,
+        connected_by=str(user.id),
+        status="active",
     )
     db.add(connection)
     await db.flush()
-    return TelegramStatusResponse(connected=True, bot_username=connection.bot_username, chat_id=connection.telegram_chat_id, status="active")
+    return TelegramStatusResponse(
+        connected=True,
+        bot_username=connection.bot_username,
+        chat_id=connection.telegram_chat_id,
+        status="active",
+    )
 
 
 @router.delete("/telegram/disconnect")
@@ -47,7 +61,7 @@ async def disconnect_telegram(
     result = await db.execute(
         select(TelegramConnection).where(
             TelegramConnection.company_id == company_id,
-            TelegramConnection.status == "active"
+            TelegramConnection.status == "active",
         )
     )
     connection = result.scalar_one_or_none()
@@ -66,10 +80,15 @@ async def telegram_status(
     result = await db.execute(
         select(TelegramConnection).where(
             TelegramConnection.company_id == company_id,
-            TelegramConnection.status == "active"
+            TelegramConnection.status == "active",
         )
     )
     connection = result.scalar_one_or_none()
     if not connection:
         return TelegramStatusResponse(connected=False)
-    return TelegramStatusResponse(connected=True, bot_username=connection.bot_username, chat_id=connection.telegram_chat_id, status="active")
+    return TelegramStatusResponse(
+        connected=True,
+        bot_username=connection.bot_username,
+        chat_id=connection.telegram_chat_id,
+        status="active",
+    )

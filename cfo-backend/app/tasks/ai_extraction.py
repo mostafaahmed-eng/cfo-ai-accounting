@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from uuid import uuid4
 from datetime import date
@@ -52,7 +51,9 @@ async def _process_extraction(inbox_item_id: str) -> dict:
             await session.commit()
             return {"status": "error", "message": "No text content"}
 
-        extraction_result = await extract_from_text(text, item.detected_language or "en")
+        extraction_result = await extract_from_text(
+            text, item.detected_language or "en"
+        )
 
         ai_extraction = AIExtraction(
             id=uuid4(),
@@ -82,7 +83,9 @@ async def _process_extraction(inbox_item_id: str) -> dict:
         else:
             item.status = "error"
             item.error_code = "extraction_failed"
-            item.error_message = extraction_result.get("validation_error", "Extraction returned no data")
+            item.error_message = extraction_result.get(
+                "validation_error", "Extraction returned no data"
+            )
 
         await session.commit()
 
@@ -142,7 +145,8 @@ async def _create_draft_from_extraction(session, item: InboxItem, extracted: dic
         tax_amount=tax_amount,
         currency=currency,
         transaction_date=txn_date,
-        description=f"[AI] {description}" + (f" — {vendor_name}" if vendor_name else ""),
+        description=f"[AI] {description}"
+        + (f" — {vendor_name}" if vendor_name else ""),
         category_account_id=category_account_id,
         payment_account_id=payment_account_id,
         reference_number=extracted.get("reference_number"),
@@ -174,8 +178,9 @@ async def _get_telegram_chat_id(session, company_id) -> int | None:
     return conn.telegram_chat_id if conn else None
 
 
-def _send_result_to_telegram(chat_id: int, item, extracted_data: dict, draft_id: str | None):
-    import json as _json
+def _send_result_to_telegram(
+    chat_id: int, item, extracted_data: dict, draft_id: str | None
+):
 
     if draft_id and extracted_data.get("amount"):
         amount = extracted_data.get("amount", "?")

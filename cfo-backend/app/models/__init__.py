@@ -14,3 +14,29 @@ from app.models.budget import Budget, BudgetLine
 from app.models.exchange_rate import ExchangeRate
 from app.models.notification import Notification
 from app.models.audit_log import AuditLog
+
+__all__ = [
+    "Base",
+    "BaseModel",
+    "TimestampMixin",
+    "User",
+    "Company",
+    "CompanyMember",
+    "Account",
+    "InboxItem",
+    "Document",
+    "AIExtraction",
+    "Vendor",
+    "VendorAlias",
+    "DraftTransaction",
+    "ApprovalRequest",
+    "JournalEntry",
+    "JournalLine",
+    "TelegramConnection",
+    "TelegramUpdate",
+    "Budget",
+    "BudgetLine",
+    "ExchangeRate",
+    "Notification",
+    "AuditLog",
+]

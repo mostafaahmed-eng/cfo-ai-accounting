@@ -42,7 +42,10 @@ async def extract_from_text(text: str, language: str = "en") -> dict:
                 "model": settings.OPENROUTER_MODEL,
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Language: {language}\n\nExtract financial data from this:\n{text}"},
+                    {
+                        "role": "user",
+                        "content": f"Language: {language}\n\nExtract financial data from this:\n{text}",
+                    },
                 ],
                 "temperature": 0.1,
                 "max_tokens": 2000,
@@ -58,8 +61,9 @@ async def extract_from_text(text: str, language: str = "en") -> dict:
     output_tokens = usage.get("completion_tokens", 0)
 
     import re
+
     cleaned = content.strip()
-    md_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', cleaned, re.DOTALL)
+    md_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", cleaned, re.DOTALL)
     if md_match:
         cleaned = md_match.group(1).strip()
 
@@ -75,7 +79,9 @@ async def extract_from_text(text: str, language: str = "en") -> dict:
     except ValidationError as e:
         validation_error = str(e)
 
-    estimated_cost = _estimate_cost(settings.OPENROUTER_MODEL, input_tokens, output_tokens)
+    estimated_cost = _estimate_cost(
+        settings.OPENROUTER_MODEL, input_tokens, output_tokens
+    )
 
     return {
         "extracted": validated.model_dump(mode="json") if validated else extracted,

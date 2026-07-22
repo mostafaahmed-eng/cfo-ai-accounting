@@ -14,7 +14,9 @@ class Vendor(BaseModel, TimestampMixin):
     phone = Column(String(50), nullable=True)
     tax_number = Column(String(100), nullable=True)
     country_code = Column(String(2), nullable=True)
-    default_expense_account = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True)
+    default_expense_account = Column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True
+    )
     default_currency = Column(String(3), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
 

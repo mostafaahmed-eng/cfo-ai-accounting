@@ -17,7 +17,11 @@ async def list_rates(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(ExchangeRate).where(ExchangeRate.company_id == company_id).order_by(ExchangeRate.rate_date.desc()))
+    result = await db.execute(
+        select(ExchangeRate)
+        .where(ExchangeRate.company_id == company_id)
+        .order_by(ExchangeRate.rate_date.desc())
+    )
     return [ExchangeRateResponse.model_validate(r) for r in result.scalars().all()]
 
 
@@ -29,9 +33,13 @@ async def create_rate(
     db: AsyncSession = Depends(get_db),
 ):
     rate = ExchangeRate(
-        id=uuid4(), company_id=company_id, base_currency=data.base_currency,
-        quote_currency=data.quote_currency, rate=data.rate,
-        rate_date=data.rate_date, source=data.source,
+        id=uuid4(),
+        company_id=company_id,
+        base_currency=data.base_currency,
+        quote_currency=data.quote_currency,
+        rate=data.rate,
+        rate_date=data.rate_date,
+        source=data.source,
     )
     db.add(rate)
     await db.flush()

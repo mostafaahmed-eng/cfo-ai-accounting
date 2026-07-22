@@ -20,13 +20,23 @@ class Company(BaseModel, TimestampMixin):
     inbox_items = relationship("InboxItem", back_populates="company", lazy="noload")
     documents = relationship("Document", back_populates="company", lazy="noload")
     vendors = relationship("Vendor", back_populates="company", lazy="noload")
-    draft_transactions = relationship("DraftTransaction", back_populates="company", lazy="noload")
-    journal_entries = relationship("JournalEntry", back_populates="company", lazy="noload")
+    draft_transactions = relationship(
+        "DraftTransaction", back_populates="company", lazy="noload"
+    )
+    journal_entries = relationship(
+        "JournalEntry", back_populates="company", lazy="noload"
+    )
     budgets = relationship("Budget", back_populates="company", lazy="noload")
-    notifications = relationship("Notification", back_populates="company", lazy="noload")
+    notifications = relationship(
+        "Notification", back_populates="company", lazy="noload"
+    )
     audit_logs = relationship("AuditLog", back_populates="company", lazy="noload")
-    telegram_connections = relationship("TelegramConnection", back_populates="company", lazy="noload")
-    exchange_rates = relationship("ExchangeRate", back_populates="company", lazy="noload")
+    telegram_connections = relationship(
+        "TelegramConnection", back_populates="company", lazy="noload"
+    )
+    exchange_rates = relationship(
+        "ExchangeRate", back_populates="company", lazy="noload"
+    )
 
 
 class CompanyMember(BaseModel, TimestampMixin):

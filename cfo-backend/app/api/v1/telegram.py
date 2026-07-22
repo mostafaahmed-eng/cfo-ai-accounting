@@ -1,4 +1,3 @@
-import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,7 +11,11 @@ from app.models.draft_transaction import DraftTransaction
 from app.schemas.telegram import TelegramStatusResponse
 from app.dependencies import get_current_user, get_current_company_id
 from app.tasks.ai_extraction import run_ai_extraction
-from app.tasks.telegram_responses import send_telegram_response, send_telegram_edit, answer_telegram_callback
+from app.tasks.telegram_responses import (
+    send_telegram_response,
+    send_telegram_edit,
+    answer_telegram_callback,
+)
 
 router = APIRouter()
 settings = get_settings()
@@ -32,7 +35,9 @@ async def telegram_webhook(
     if not update_id:
         raise HTTPException(status_code=400, detail="Missing update_id")
 
-    existing = await db.execute(select(TelegramUpdate).where(TelegramUpdate.telegram_update_id == update_id))
+    existing = await db.execute(
+        select(TelegramUpdate).where(TelegramUpdate.telegram_update_id == update_id)
+    )
     if existing.scalar_one_or_none():
         return {"status": "duplicate"}
 
@@ -45,7 +50,9 @@ async def telegram_webhook(
     if not chat_id:
         return {"status": "no_chat_id"}
 
-    result = await db.execute(select(TelegramConnection).where(TelegramConnection.telegram_chat_id == chat_id))
+    result = await db.execute(
+        select(TelegramConnection).where(TelegramConnection.telegram_chat_id == chat_id)
+    )
     connection = result.scalar_one_or_none()
 
     if not connection:
@@ -63,41 +70,64 @@ async def telegram_webhook(
             "/help — Show this message",
         )
         update = TelegramUpdate(
-            id=uuid4(), connection_id=str(connection.id), telegram_update_id=update_id,
-            message_id=message.get("message_id"), chat_id=chat_id,
-            update_type="command", payload=body, processing_status="processed",
+            id=uuid4(),
+            connection_id=str(connection.id),
+            telegram_update_id=update_id,
+            message_id=message.get("message_id"),
+            chat_id=chat_id,
+            update_type="command",
+            payload=body,
+            processing_status="processed",
         )
         db.add(update)
         await db.flush()
         return {"status": "ok"}
 
     if text and text.startswith("/status"):
-        send_telegram_response.delay(chat_id, f"Connected to {connection.bot_username}\nChat ID: {chat_id}")
+        send_telegram_response.delay(
+            chat_id, f"Connected to {connection.bot_username}\nChat ID: {chat_id}"
+        )
         update = TelegramUpdate(
-            id=uuid4(), connection_id=str(connection.id), telegram_update_id=update_id,
-            message_id=message.get("message_id"), chat_id=chat_id,
-            update_type="command", payload=body, processing_status="processed",
+            id=uuid4(),
+            connection_id=str(connection.id),
+            telegram_update_id=update_id,
+            message_id=message.get("message_id"),
+            chat_id=chat_id,
+            update_type="command",
+            payload=body,
+            processing_status="processed",
         )
         db.add(update)
         await db.flush()
         return {"status": "ok"}
 
     update = TelegramUpdate(
-        id=uuid4(), connection_id=str(connection.id), telegram_update_id=update_id,
-        message_id=message.get("message_id"), chat_id=chat_id,
-        update_type="message", payload=body, processing_status="received",
+        id=uuid4(),
+        connection_id=str(connection.id),
+        telegram_update_id=update_id,
+        message_id=message.get("message_id"),
+        chat_id=chat_id,
+        update_type="message",
+        payload=body,
+        processing_status="received",
     )
     db.add(update)
 
     if text:
         item = InboxItem(
-            id=uuid4(), company_id=connection.company_id, source="telegram",
-            content_type="text", original_text=text, status="received",
+            id=uuid4(),
+            company_id=connection.company_id,
+            source="telegram",
+            content_type="text",
+            original_text=text,
+            status="received",
         )
         db.add(item)
         await db.flush()
 
-        send_telegram_response.delay(chat_id, "Processing your message... I'll extract financial data shortly.")
+        send_telegram_response.delay(
+            chat_id, "Processing your message... I'll extract financial data shortly."
+        )
         run_ai_extraction.delay(str(item.id))
         update.inbox_item_id = str(item.id)
         update.processing_status = "dispatched"
@@ -108,7 +138,7 @@ async def telegram_webhook(
                 send_telegram_response.delay(
                     chat_id,
                     f"Received a {ct}. Currently I only support text-based extraction. "
-                    "Please type the expense details (e.g., 'Paid $50 for office supplies to Acme Corp on 2025-01-15')."
+                    "Please type the expense details (e.g., 'Paid $50 for office supplies to Acme Corp on 2025-01-15').",
                 )
                 update.processing_status = "unsupported_content"
                 break
@@ -131,11 +161,14 @@ async def _handle_callback_query(callback_query: dict, db: AsyncSession):
 
     if data.startswith("approve:"):
         draft_id = data.split(":", 1)[1]
-        result = await db.execute(select(DraftTransaction).where(DraftTransaction.id == draft_id))
+        result = await db.execute(
+            select(DraftTransaction).where(DraftTransaction.id == draft_id)
+        )
         draft = result.scalar_one_or_none()
         if draft and draft.status == "ready_for_review":
             from app.services.journal import create_journal_entry_from_draft
             from datetime import datetime
+
             draft.status = "approved"
             draft.approved_at = datetime.utcnow()
             await db.flush()
@@ -143,21 +176,27 @@ async def _handle_callback_query(callback_query: dict, db: AsyncSession):
             draft.status = "posted"
             await db.flush()
             send_telegram_edit.delay(
-                chat_id, message_id,
+                chat_id,
+                message_id,
                 f"Approved and posted!\nAmount: {draft.currency} {draft.amount}\n{draft.description}",
             )
         else:
-            send_telegram_response.delay(chat_id, "Draft not found or already processed.")
+            send_telegram_response.delay(
+                chat_id, "Draft not found or already processed."
+            )
 
     elif data.startswith("reject:"):
         draft_id = data.split(":", 1)[1]
-        result = await db.execute(select(DraftTransaction).where(DraftTransaction.id == draft_id))
+        result = await db.execute(
+            select(DraftTransaction).where(DraftTransaction.id == draft_id)
+        )
         draft = result.scalar_one_or_none()
         if draft:
             draft.status = "rejected"
             await db.flush()
             send_telegram_edit.delay(
-                chat_id, message_id,
+                chat_id,
+                message_id,
                 f"Rejected.\nAmount: {draft.currency} {draft.amount}\n{draft.description}",
             )
         else:
@@ -188,10 +227,15 @@ async def telegram_status(
     result = await db.execute(
         select(TelegramConnection).where(
             TelegramConnection.company_id == company_id,
-            TelegramConnection.status == "active"
+            TelegramConnection.status == "active",
         )
     )
     connection = result.scalar_one_or_none()
     if not connection:
         return TelegramStatusResponse(connected=False)
-    return TelegramStatusResponse(connected=True, bot_username=connection.bot_username, chat_id=connection.telegram_chat_id, status="active")
+    return TelegramStatusResponse(
+        connected=True,
+        bot_username=connection.bot_username,
+        chat_id=connection.telegram_chat_id,
+        status="active",
+    )

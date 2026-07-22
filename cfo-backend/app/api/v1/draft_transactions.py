@@ -5,7 +5,11 @@ from datetime import datetime
 from app.database import get_db
 from app.models.draft_transaction import DraftTransaction
 from app.models.user import User
-from app.schemas.draft_transaction import DraftTransactionUpdate, DraftTransactionResponse, ClarificationRequest
+from app.schemas.draft_transaction import (
+    DraftTransactionUpdate,
+    DraftTransactionResponse,
+    ClarificationRequest,
+)
 from app.dependencies import get_current_user, get_current_company_id
 from app.services.journal import create_journal_entry_from_draft
 
@@ -19,7 +23,9 @@ async def list_drafts(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(DraftTransaction).where(DraftTransaction.company_id == company_id).order_by(DraftTransaction.created_at.desc())
+        select(DraftTransaction)
+        .where(DraftTransaction.company_id == company_id)
+        .order_by(DraftTransaction.created_at.desc())
     )
     return [DraftTransactionResponse.model_validate(d) for d in result.scalars().all()]
 
@@ -31,7 +37,11 @@ async def get_draft(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(DraftTransaction).where(DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id))
+    result = await db.execute(
+        select(DraftTransaction).where(
+            DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id
+        )
+    )
     draft = result.scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -46,12 +56,18 @@ async def update_draft(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(DraftTransaction).where(DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id))
+    result = await db.execute(
+        select(DraftTransaction).where(
+            DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id
+        )
+    )
     draft = result.scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     if draft.status in ("posted", "approved"):
-        raise HTTPException(status_code=400, detail="Cannot edit posted or approved transaction")
+        raise HTTPException(
+            status_code=400, detail="Cannot edit posted or approved transaction"
+        )
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(draft, field, value)
     draft.status = "ready_for_review"
@@ -66,7 +82,11 @@ async def approve_draft(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(DraftTransaction).where(DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id))
+    result = await db.execute(
+        select(DraftTransaction).where(
+            DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id
+        )
+    )
     draft = result.scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -91,7 +111,11 @@ async def reject_draft(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(DraftTransaction).where(DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id))
+    result = await db.execute(
+        select(DraftTransaction).where(
+            DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id
+        )
+    )
     draft = result.scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -100,7 +124,9 @@ async def reject_draft(
     return DraftTransactionResponse.model_validate(draft)
 
 
-@router.post("/{draft_id}/request-clarification", response_model=DraftTransactionResponse)
+@router.post(
+    "/{draft_id}/request-clarification", response_model=DraftTransactionResponse
+)
 async def request_clarification(
     draft_id: str,
     data: ClarificationRequest,
@@ -108,7 +134,11 @@ async def request_clarification(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(DraftTransaction).where(DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id))
+    result = await db.execute(
+        select(DraftTransaction).where(
+            DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id
+        )
+    )
     draft = result.scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")

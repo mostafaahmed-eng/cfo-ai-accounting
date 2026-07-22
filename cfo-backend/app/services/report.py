@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func
 from datetime import datetime
 from app.models.journal import JournalEntry, JournalLine
 from app.models.account import Account
@@ -8,9 +8,13 @@ from app.models.draft_transaction import DraftTransaction
 from app.models.vendor import Vendor
 from app.models.budget import Budget, BudgetLine
 from app.schemas.report import (
-    DashboardResponse, PnLResponse, CashFlowResponse,
-    BalanceSheetResponse, ExpenseByCategoryResponse,
-    VendorReportResponse, BudgetVsActualResponse,
+    DashboardResponse,
+    PnLResponse,
+    CashFlowResponse,
+    BalanceSheetResponse,
+    ExpenseByCategoryResponse,
+    VendorReportResponse,
+    BudgetVsActualResponse,
 )
 
 
@@ -52,7 +56,9 @@ class ReportService:
 
         # Pending approvals
         pending_result = await db.execute(
-            select(func.count()).select_from(ApprovalRequest).where(
+            select(func.count())
+            .select_from(ApprovalRequest)
+            .where(
                 ApprovalRequest.company_id == company_id,
                 ApprovalRequest.status == "pending",
             )
@@ -68,12 +74,14 @@ class ReportService:
         )
         recent_txns = []
         for tx in recent_result.scalars().all():
-            recent_txns.append({
-                "description": tx.description,
-                "date": str(tx.transaction_date),
-                "amount": float(tx.amount) * (-1 if tx.type == "expense" else 1),
-                "status": tx.status,
-            })
+            recent_txns.append(
+                {
+                    "description": tx.description,
+                    "date": str(tx.transaction_date),
+                    "amount": float(tx.amount) * (-1 if tx.type == "expense" else 1),
+                    "status": tx.status,
+                }
+            )
 
         return DashboardResponse(
             monthly_income=monthly_income,
@@ -91,7 +99,10 @@ class ReportService:
 
         # Revenue by account
         rev_result = await db.execute(
-            select(Account.name_en, func.coalesce(func.sum(JournalLine.credit), 0).label("amount"))
+            select(
+                Account.name_en,
+                func.coalesce(func.sum(JournalLine.credit), 0).label("amount"),
+            )
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
             .join(Account, JournalLine.account_id == Account.id)
@@ -108,7 +119,10 @@ class ReportService:
 
         # Expenses by account
         exp_result = await db.execute(
-            select(Account.name_en, func.coalesce(func.sum(JournalLine.debit), 0).label("amount"))
+            select(
+                Account.name_en,
+                func.coalesce(func.sum(JournalLine.debit), 0).label("amount"),
+            )
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
             .join(Account, JournalLine.account_id == Account.id)
@@ -125,7 +139,8 @@ class ReportService:
 
         return PnLResponse(
             period=month_start.strftime("%Y-%m"),
-            revenue=revenue, expenses=expenses,
+            revenue=revenue,
+            expenses=expenses,
             net_income=total_revenue - total_expenses,
         )
 
@@ -137,7 +152,8 @@ class ReportService:
         # Net from all posted entries
         net_result = await db.execute(
             select(
-                func.coalesce(func.sum(JournalLine.debit), 0) - func.coalesce(func.sum(JournalLine.credit), 0)
+                func.coalesce(func.sum(JournalLine.debit), 0)
+                - func.coalesce(func.sum(JournalLine.credit), 0)
             )
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
@@ -151,18 +167,27 @@ class ReportService:
 
         return CashFlowResponse(
             period=month_start.strftime("%Y-%m"),
-            operating=net, investing=0, financing=0, net=net, monthly_data=[],
+            operating=net,
+            investing=0,
+            financing=0,
+            net=net,
+            monthly_data=[],
         )
 
     @staticmethod
-    async def get_balance_sheet(db: AsyncSession, company_id: str) -> BalanceSheetResponse:
+    async def get_balance_sheet(
+        db: AsyncSession, company_id: str
+    ) -> BalanceSheetResponse:
         now = datetime.utcnow()
 
         # Compute balances per account type from posted entries
         result = await db.execute(
-            select(Account.type, Account.name_en,
-                   func.coalesce(func.sum(JournalLine.debit), 0).label("debit"),
-                   func.coalesce(func.sum(JournalLine.credit), 0).label("credit"))
+            select(
+                Account.type,
+                Account.name_en,
+                func.coalesce(func.sum(JournalLine.debit), 0).label("debit"),
+                func.coalesce(func.sum(JournalLine.credit), 0).label("credit"),
+            )
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
             .join(Account, JournalLine.account_id == Account.id)
@@ -176,7 +201,11 @@ class ReportService:
 
         assets, liabilities, equity = [], [], []
         for acc_type, name, debit, credit in rows:
-            amount = float(debit) - float(credit) if acc_type in ("asset", "expense") else float(credit) - float(debit)
+            amount = (
+                float(debit) - float(credit)
+                if acc_type in ("asset", "expense")
+                else float(credit) - float(debit)
+            )
             entry = {"account": name, "amount": amount}
             if acc_type == "asset":
                 assets.append(entry)
@@ -186,22 +215,31 @@ class ReportService:
                 equity.append(entry)
 
         total_assets = sum(a["amount"] for a in assets)
-        total_liabilities = sum(l["amount"] for l in liabilities)
+        total_liabilities = sum(liab["amount"] for liab in liabilities)
         total_equity = sum(e["amount"] for e in equity)
 
         return BalanceSheetResponse(
             as_of=now.strftime("%Y-%m-%d"),
-            assets=assets, liabilities=liabilities, equity=equity,
-            total_assets=total_assets, total_liabilities=total_liabilities, total_equity=total_equity,
+            assets=assets,
+            liabilities=liabilities,
+            equity=equity,
+            total_assets=total_assets,
+            total_liabilities=total_liabilities,
+            total_equity=total_equity,
         )
 
     @staticmethod
-    async def get_expenses_by_category(db: AsyncSession, company_id: str) -> ExpenseByCategoryResponse:
+    async def get_expenses_by_category(
+        db: AsyncSession, company_id: str
+    ) -> ExpenseByCategoryResponse:
         now = datetime.utcnow()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         result = await db.execute(
-            select(Account.name_en, func.coalesce(func.sum(JournalLine.debit), 0).label("amount"))
+            select(
+                Account.name_en,
+                func.coalesce(func.sum(JournalLine.debit), 0).label("amount"),
+            )
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
             .join(Account, JournalLine.account_id == Account.id)
@@ -218,7 +256,8 @@ class ReportService:
 
         return ExpenseByCategoryResponse(
             period=month_start.strftime("%Y-%m"),
-            categories=categories, total=total,
+            categories=categories,
+            total=total,
         )
 
     @staticmethod
@@ -227,11 +266,14 @@ class ReportService:
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         result = await db.execute(
-            select(Vendor.name, func.coalesce(func.sum(DraftTransaction.amount), 0).label("total"))
+            select(
+                Vendor.name,
+                func.coalesce(func.sum(DraftTransaction.amount), 0).label("total"),
+            )
             .join(DraftTransaction, DraftTransaction.vendor_id == Vendor.id)
             .where(
                 Vendor.company_id == company_id,
-                Vendor.is_active == True,
+                Vendor.is_active,
                 DraftTransaction.status == "posted",
                 DraftTransaction.transaction_date >= month_start.date(),
             )
@@ -242,11 +284,14 @@ class ReportService:
 
         return VendorReportResponse(
             period=month_start.strftime("%Y-%m"),
-            vendors=vendors, total=total,
+            vendors=vendors,
+            total=total,
         )
 
     @staticmethod
-    async def get_budget_vs_actual(db: AsyncSession, company_id: str) -> BudgetVsActualResponse:
+    async def get_budget_vs_actual(
+        db: AsyncSession, company_id: str
+    ) -> BudgetVsActualResponse:
         now = datetime.utcnow()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -260,7 +305,9 @@ class ReportService:
         budget = budget_result.scalar_one_or_none()
 
         if not budget:
-            return BudgetVsActualResponse(period=month_start.strftime("%Y-%m"), items=[])
+            return BudgetVsActualResponse(
+                period=month_start.strftime("%Y-%m"), items=[]
+            )
 
         # Get budget lines
         lines_result = await db.execute(
@@ -286,13 +333,15 @@ class ReportService:
             planned = float(line.planned_amount)
             percentage_used = (actual / planned * 100) if planned > 0 else 0
 
-            items.append({
-                "account": account_name,
-                "planned": planned,
-                "actual": actual,
-                "remaining": planned - actual,
-                "percentage_used": percentage_used,
-                "alert": percentage_used >= float(line.alert_percentage),
-            })
+            items.append(
+                {
+                    "account": account_name,
+                    "planned": planned,
+                    "actual": actual,
+                    "remaining": planned - actual,
+                    "percentage_used": percentage_used,
+                    "alert": percentage_used >= float(line.alert_percentage),
+                }
+            )
 
         return BudgetVsActualResponse(period=month_start.strftime("%Y-%m"), items=items)

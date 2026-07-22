@@ -17,7 +17,9 @@ async def list_journal_entries(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(JournalEntry).where(JournalEntry.company_id == company_id).order_by(JournalEntry.created_at.desc())
+        select(JournalEntry)
+        .where(JournalEntry.company_id == company_id)
+        .order_by(JournalEntry.created_at.desc())
     )
     entries = result.scalars().all()
     response = []
@@ -36,7 +38,11 @@ async def get_journal_entry(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(JournalEntry).where(JournalEntry.id == entry_id, JournalEntry.company_id == company_id))
+    result = await db.execute(
+        select(JournalEntry).where(
+            JournalEntry.id == entry_id, JournalEntry.company_id == company_id
+        )
+    )
     entry = result.scalar_one_or_none()
     if not entry:
         raise HTTPException(status_code=404, detail="Journal entry not found")

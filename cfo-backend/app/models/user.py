@@ -10,8 +10,18 @@ class User(BaseModel, TimestampMixin):
     email = Column(String(255), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     password_hash = Column(String(255), nullable=True)
-    language = Column(SAEnum(Language, create_type=False), default=Language.en, nullable=False, server_default="en")
+    language = Column(
+        SAEnum(Language, create_type=False),
+        default=Language.en,
+        nullable=False,
+        server_default="en",
+    )
     timezone = Column(String(50), default="UTC", nullable=False, server_default="UTC")
-    status = Column(SAEnum(UserStatus, create_type=False), default=UserStatus.active, nullable=False, server_default="active")
+    status = Column(
+        SAEnum(UserStatus, create_type=False),
+        default=UserStatus.active,
+        nullable=False,
+        server_default="active",
+    )
 
     memberships = relationship("CompanyMember", back_populates="user", lazy="noload")

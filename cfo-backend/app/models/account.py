@@ -14,7 +14,9 @@ class Account(BaseModel, TimestampMixin):
     type = Column(String(20), nullable=False)
     subtype = Column(String(50), nullable=False)
     currency = Column(String(3), nullable=True)
-    parent_account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True)
+    parent_account_id = Column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True
+    )
     is_payment_account = Column(Boolean, default=False, nullable=False)
     is_system = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)

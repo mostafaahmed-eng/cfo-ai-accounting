@@ -1,5 +1,4 @@
 import httpx
-import json
 import logging
 from app.config import get_settings
 
@@ -46,7 +45,10 @@ class TelegramClient:
         text: str | None = None,
         show_alert: bool = False,
     ) -> dict:
-        payload: dict = {"callback_query_id": callback_query_id, "show_alert": show_alert}
+        payload: dict = {
+            "callback_query_id": callback_query_id,
+            "show_alert": show_alert,
+        }
         if text:
             payload["text"] = text
         return await self._request("answerCallbackQuery", payload)

@@ -41,9 +41,15 @@ async def upload_document(
     await storage_client.upload_file(storage_key, content, mime)
 
     doc = Document(
-        id=uuid4(), company_id=company_id, storage_key=storage_key,
-        original_name=file.filename, mime_type=mime, size_bytes=len(content),
-        sha256_hash=sha256, document_type="receipt", upload_status="stored",
+        id=uuid4(),
+        company_id=company_id,
+        storage_key=storage_key,
+        original_name=file.filename,
+        mime_type=mime,
+        size_bytes=len(content),
+        sha256_hash=sha256,
+        document_type="receipt",
+        upload_status="stored",
         uploaded_by=str(user.id),
     )
     db.add(doc)
@@ -58,7 +64,9 @@ async def get_document(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Document).where(Document.id == doc_id, Document.company_id == company_id))
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.company_id == company_id)
+    )
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -72,12 +80,16 @@ async def get_download_url(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Document).where(Document.id == doc_id, Document.company_id == company_id))
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.company_id == company_id)
+    )
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     url = await storage_client.get_signed_url(doc.storage_key, expires_in=3600)
-    return DownloadURLResponse(download_url=url, expires_at=datetime.utcnow() + timedelta(hours=1))
+    return DownloadURLResponse(
+        download_url=url, expires_at=datetime.utcnow() + timedelta(hours=1)
+    )
 
 
 @router.delete("/{doc_id}")
@@ -87,7 +99,9 @@ async def delete_document(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Document).where(Document.id == doc_id, Document.company_id == company_id))
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.company_id == company_id)
+    )
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")

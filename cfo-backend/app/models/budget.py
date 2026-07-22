@@ -18,7 +18,12 @@ class Budget(BaseModel, TimestampMixin):
 
     company = relationship("Company", back_populates="budgets")
     creator = relationship("User", foreign_keys=[created_by], lazy="noload")
-    lines = relationship("BudgetLine", back_populates="budget", cascade="all, delete-orphan", lazy="selectin")
+    lines = relationship(
+        "BudgetLine",
+        back_populates="budget",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
 
 class BudgetLine(BaseModel, TimestampMixin):

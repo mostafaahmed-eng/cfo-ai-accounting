@@ -5,7 +5,12 @@ from uuid import uuid4
 from app.database import get_db
 from app.models.account import Account
 from app.models.user import User
-from app.schemas.account import AccountCreate, AccountUpdate, AccountResponse, ImportTemplateRequest
+from app.schemas.account import (
+    AccountCreate,
+    AccountUpdate,
+    AccountResponse,
+    ImportTemplateRequest,
+)
 from app.dependencies import get_current_user, get_current_company_id
 
 router = APIRouter()
@@ -17,7 +22,9 @@ async def list_accounts(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Account).where(Account.company_id == company_id).order_by(Account.code))
+    result = await db.execute(
+        select(Account).where(Account.company_id == company_id).order_by(Account.code)
+    )
     return [AccountResponse.model_validate(a) for a in result.scalars().all()]
 
 
@@ -29,10 +36,18 @@ async def create_account(
     db: AsyncSession = Depends(get_db),
 ):
     account = Account(
-        id=uuid4(), company_id=company_id, code=data.code,
-        name_en=data.name_en, name_ar=data.name_ar, type=data.type.value,
-        subtype=data.subtype, currency=data.currency, parent_account_id=data.parent_account_id,
-        is_payment_account=data.is_payment_account, is_active=True, is_system=False,
+        id=uuid4(),
+        company_id=company_id,
+        code=data.code,
+        name_en=data.name_en,
+        name_ar=data.name_ar,
+        type=data.type.value,
+        subtype=data.subtype,
+        currency=data.currency,
+        parent_account_id=data.parent_account_id,
+        is_payment_account=data.is_payment_account,
+        is_active=True,
+        is_system=False,
     )
     db.add(account)
     await db.flush()
@@ -47,7 +62,11 @@ async def update_account(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Account).where(Account.id == account_id, Account.company_id == company_id))
+    result = await db.execute(
+        select(Account).where(
+            Account.id == account_id, Account.company_id == company_id
+        )
+    )
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -62,4 +81,7 @@ async def import_template(
     data: ImportTemplateRequest,
     user: User = Depends(get_current_user),
 ):
-    return {"format": data.format, "template": "code,name_en,name_ar,type,subtype,currency,parent_code,is_payment_account"}
+    return {
+        "format": data.format,
+        "template": "code,name_en,name_ar,type,subtype,currency,parent_code,is_payment_account",
+    }

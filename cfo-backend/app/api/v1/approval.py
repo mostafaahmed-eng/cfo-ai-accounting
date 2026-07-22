@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime
 from app.database import get_db
 from app.models.approval import ApprovalRequest
 from app.models.user import User
@@ -18,10 +17,12 @@ async def list_approvals(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(ApprovalRequest).where(
+        select(ApprovalRequest)
+        .where(
             ApprovalRequest.company_id == company_id,
             ApprovalRequest.status == "pending",
-        ).order_by(ApprovalRequest.created_at.desc())
+        )
+        .order_by(ApprovalRequest.created_at.desc())
     )
     return [ApprovalResponse.model_validate(a) for a in result.scalars().all()]
 
@@ -33,7 +34,11 @@ async def get_approval(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(ApprovalRequest).where(ApprovalRequest.id == approval_id, ApprovalRequest.company_id == company_id))
+    result = await db.execute(
+        select(ApprovalRequest).where(
+            ApprovalRequest.id == approval_id, ApprovalRequest.company_id == company_id
+        )
+    )
     approval = result.scalar_one_or_none()
     if not approval:
         raise HTTPException(status_code=404, detail="Approval not found")

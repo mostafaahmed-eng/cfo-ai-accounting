@@ -14,14 +14,22 @@ async def test_submit_arabic_expense_and_approve(client):
     6. Verify journal entry is balanced and posted
     """
     # Verify Arabic intake endpoint exists and requires auth
-    intake_resp = await client.post("/api/v1/intake/text", json={
-        "text": "دفعت ٥٠٠ جنيه إعلانات",
-        "language": "ar",
-    })
+    intake_resp = await client.post(
+        "/api/v1/intake/text",
+        json={
+            "text": "دفعت ٥٠٠ جنيه إعلانات",
+            "language": "ar",
+        },
+    )
     assert intake_resp.status_code == 401
 
     # Verify text processing detects Arabic correctly
-    from app.core.text_processing import detect_language, extract_currency, extract_amount
+    from app.core.text_processing import (
+        detect_language,
+        extract_currency,
+        extract_amount,
+    )
+
     lang = detect_language("دفعت ٥٠٠ جنيه إعلانات")
     assert lang == "ar"
 

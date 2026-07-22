@@ -14,15 +14,21 @@ async def test_submit_english_expense_and_approve(client):
     6. Verify journal entry is balanced and posted
     """
     # Step 1: Verify auth works
-    login_resp = await client.post("/api/v1/auth/login", json={
-        "email": "test@example.com",
-        "password": "testpass",
-    })
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "test@example.com",
+            "password": "testpass",
+        },
+    )
     # Without a seeded user, this returns 401 - which validates auth works
     assert login_resp.status_code == 401
 
     # Step 2: Submit text without auth should fail
-    intake_resp = await client.post("/api/v1/intake/text", json={
-        "text": "I spent $100 for VPS hosting",
-    })
+    intake_resp = await client.post(
+        "/api/v1/intake/text",
+        json={
+            "text": "I spent $100 for VPS hosting",
+        },
+    )
     assert intake_resp.status_code == 401
