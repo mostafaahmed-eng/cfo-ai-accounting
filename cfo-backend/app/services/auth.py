@@ -1,16 +1,31 @@
 from jose import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.config import get_settings
 
 settings = get_settings()
 
 
 def create_access_token(user_id: str, expires_delta: timedelta | None = None) -> str:
-    expire = datetime.utcnow() + (
+    expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     return jwt.encode(
-        {"sub": user_id, "exp": expire},
+        {"sub": user_id, "type": "access", "exp": expire},
         settings.SECRET_KEY,
         algorithm=settings.JWT_ALGORITHM,
     )
+
+
+def create_refresh_token(user_id: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(
+        days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
+    )
+    return jwt.encode(
+        {"sub": user_id, "type": "refresh", "exp": expire},
+        settings.SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+
+def decode_token(token: str) -> dict:
+    return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])

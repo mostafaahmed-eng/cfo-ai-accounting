@@ -18,6 +18,12 @@ class BudgetCreate(BaseModel):
     lines: list[BudgetLineInput] = []
 
 
+class BudgetUpdate(BaseModel):
+    name: str | None = None
+    status: str | None = None
+    lines: list[BudgetLineInput] | None = None
+
+
 class BudgetLineResponse(BaseModel):
     id: UUID
     account_id: UUID

@@ -38,7 +38,7 @@ class InvitationResponse(BaseModel):
     company_id: UUID
     email: str
     role: UserRole
-    status: MemberStatus
+    status: str
     joined_at: datetime
 
     model_config = {"from_attributes": True}

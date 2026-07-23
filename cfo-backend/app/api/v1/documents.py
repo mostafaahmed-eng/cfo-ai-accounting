@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import uuid4
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import magic
 from app.database import get_db
@@ -88,7 +88,8 @@ async def get_download_url(
         raise HTTPException(status_code=404, detail="Document not found")
     url = await storage_client.get_signed_url(doc.storage_key, expires_in=3600)
     return DownloadURLResponse(
-        download_url=url, expires_at=datetime.utcnow() + timedelta(hours=1)
+        download_url=url,
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1),
     )
 
 

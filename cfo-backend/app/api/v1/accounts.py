@@ -28,6 +28,24 @@ async def list_accounts(
     return [AccountResponse.model_validate(a) for a in result.scalars().all()]
 
 
+@router.get("/{account_id}", response_model=AccountResponse)
+async def get_account(
+    account_id: str,
+    user: User = Depends(get_current_user),
+    company_id: str = Depends(get_current_company_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Account).where(
+            Account.id == account_id, Account.company_id == company_id
+        )
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return AccountResponse.model_validate(account)
+
+
 @router.post("", response_model=AccountResponse)
 async def create_account(
     data: AccountCreate,

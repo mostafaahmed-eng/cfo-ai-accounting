@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models.journal import JournalEntry, JournalLine
 from app.models.account import Account
 from app.models.approval import ApprovalRequest
@@ -21,7 +21,7 @@ from app.schemas.report import (
 class ReportService:
     @staticmethod
     async def get_dashboard(db: AsyncSession, company_id: str) -> DashboardResponse:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         # Monthly income: sum of credit on revenue accounts from posted entries
@@ -94,7 +94,7 @@ class ReportService:
 
     @staticmethod
     async def get_profit_and_loss(db: AsyncSession, company_id: str) -> PnLResponse:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         # Revenue by account
@@ -146,7 +146,7 @@ class ReportService:
 
     @staticmethod
     async def get_cash_flow(db: AsyncSession, company_id: str) -> CashFlowResponse:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         # Net from all posted entries
@@ -178,7 +178,7 @@ class ReportService:
     async def get_balance_sheet(
         db: AsyncSession, company_id: str
     ) -> BalanceSheetResponse:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Compute balances per account type from posted entries
         result = await db.execute(
@@ -232,7 +232,7 @@ class ReportService:
     async def get_expenses_by_category(
         db: AsyncSession, company_id: str
     ) -> ExpenseByCategoryResponse:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         result = await db.execute(
@@ -262,7 +262,7 @@ class ReportService:
 
     @staticmethod
     async def get_vendors(db: AsyncSession, company_id: str) -> VendorReportResponse:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         result = await db.execute(
@@ -292,7 +292,7 @@ class ReportService:
     async def get_budget_vs_actual(
         db: AsyncSession, company_id: str
     ) -> BudgetVsActualResponse:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         # Get active budgets

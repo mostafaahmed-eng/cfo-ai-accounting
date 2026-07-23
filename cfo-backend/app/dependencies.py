@@ -3,11 +3,12 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import UUID
-from jose import jwt, JWTError
+from jose import JWTError
 from app.config import get_settings
 from app.database import get_db
 from app.models.user import User
 from app.models.company import CompanyMember
+from app.services.auth import decode_token
 
 security = HTTPBearer()
 settings = get_settings()
@@ -19,9 +20,11 @@ async def get_current_user(
 ) -> User:
     token = credentials.credentials
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
-        )
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type"
+            )
         user_id = payload.get("sub")
         if user_id is None:
             raise HTTPException(
@@ -49,14 +52,6 @@ async def get_current_user(
     return user
 
 
-# A single user can belong to multiple companies (e.g. an accountant serving
-# several clients, or an employee with side projects).  The old implementation
-# used ``scalar_one_or_none()`` which raised ``MultipleResultsFound`` the
-# moment a user had two active memberships.  We now fetch all active
-# memberships and pick the best one:
-#   1. Prefer the membership whose role is OWNER (highest privilege).
-#   2. If there is no OWNER, return the first active membership.
-#   3. If the user has no active membership at all, return 403.
 async def get_current_company_id(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -75,10 +70,8 @@ async def get_current_company_id(
             detail="User has no company",
         )
 
-    # Prefer OWNER so the default company is the one the user owns.
     for m in memberships:
         if m.role == "OWNER":
             return m.company_id
 
-    # No OWNER found — fall back to the first active membership.
     return memberships[0].company_id

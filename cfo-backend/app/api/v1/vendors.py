@@ -105,3 +105,21 @@ async def add_alias(
     db.add(alias)
     await db.flush()
     return AliasResponse.model_validate(alias)
+
+
+@router.post("/{vendor_id}/deactivate", response_model=VendorResponse)
+async def deactivate_vendor(
+    vendor_id: str,
+    user: User = Depends(get_current_user),
+    company_id: str = Depends(get_current_company_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Vendor).where(Vendor.id == vendor_id, Vendor.company_id == company_id)
+    )
+    vendor = result.scalar_one_or_none()
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    vendor.is_active = False
+    await db.flush()
+    return VendorResponse.model_validate(vendor)

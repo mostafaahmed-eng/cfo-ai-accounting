@@ -14,6 +14,7 @@ from app.models.budget import Budget, BudgetLine
 from app.models.exchange_rate import ExchangeRate
 from app.models.notification import Notification
 from app.models.audit_log import AuditLog
+from app.models.invitation import Invitation
 
 __all__ = [
     "Base",
@@ -39,4 +40,5 @@ __all__ = [
     "ExchangeRate",
     "Notification",
     "AuditLog",
+    "Invitation",
 ]

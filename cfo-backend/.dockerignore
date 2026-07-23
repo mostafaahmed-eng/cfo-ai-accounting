@@ -17,3 +17,5 @@ docs/
 Makefile
 docker-compose*.yml
 .dockerignore
+tests/
+alembic/

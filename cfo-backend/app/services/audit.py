@@ -5,7 +5,7 @@ from app.models.audit_log import AuditLog
 
 async def create_audit_log(
     db: AsyncSession,
-    company_id: str,
+    company_id: str | None,
     user_id: str | None,
     actor_type: str,
     action: str,

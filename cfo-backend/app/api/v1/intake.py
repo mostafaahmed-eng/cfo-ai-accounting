@@ -12,6 +12,28 @@ from app.core.text_processing import detect_language
 router = APIRouter()
 
 
+@router.get("", response_model=list[InboxItemResponse])
+async def list_inbox_items(
+    user: User = Depends(get_current_user),
+    company_id: str = Depends(get_current_company_id),
+    db: AsyncSession = Depends(get_db),
+    skip: int = 0,
+    limit: int = 50,
+    status: str | None = None,
+):
+    query = (
+        select(InboxItem)
+        .where(InboxItem.company_id == company_id)
+        .order_by(InboxItem.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    if status:
+        query = query.where(InboxItem.status == status)
+    result = await db.execute(query)
+    return [InboxItemResponse.model_validate(i) for i in result.scalars().all()]
+
+
 @router.post("/text", response_model=InboxItemResponse)
 async def submit_text(
     data: TextInput,

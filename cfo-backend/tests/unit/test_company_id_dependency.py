@@ -1,6 +1,6 @@
 import pytest
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models.user import User
 from app.models.company import Company, CompanyMember
 from app.enums import UserStatus
@@ -34,7 +34,7 @@ def _make_membership(user_id, company_id, role="MEMBER", status="active"):
         company_id=company_id,
         role=role,
         status=status,
-        joined_at=datetime.utcnow().isoformat(),
+        joined_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
 

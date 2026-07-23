@@ -7,7 +7,7 @@ from app.models.base import BaseModel, TimestampMixin
 class AuditLog(BaseModel, TimestampMixin):
     __tablename__ = "audit_logs"
 
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     actor_type = Column(String(20), nullable=False)
     action = Column(String(100), nullable=False)

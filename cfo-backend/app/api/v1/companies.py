@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime
-from uuid import uuid4
+from datetime import datetime, timezone, timedelta
+from uuid import uuid4, UUID
+import secrets
+import hashlib
 from app.database import get_db
 from app.models.user import User
 from app.models.company import Company, CompanyMember
 from app.models.account import Account
+from app.models.invitation import Invitation
 from app.schemas.company import (
     CompanyCreate,
     CompanyResponse,
@@ -17,6 +20,7 @@ from app.schemas.company import (
 )
 from app.dependencies import get_current_user, get_current_company_id
 from app.enums import UserRole, AccountType
+from app.services.audit import create_audit_log
 
 router = APIRouter()
 
@@ -128,10 +132,22 @@ async def create_company(
         user_id=str(user.id),
         role=UserRole.OWNER.value,
         status="active",
-        joined_at=datetime.utcnow().isoformat(),
+        joined_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
     db.add(member)
     await db.flush()
+
+    await create_audit_log(
+        db=db,
+        company_id=str(company.id),
+        user_id=str(user.id),
+        actor_type="user",
+        action="company.created",
+        entity_type="company",
+        entity_id=str(company.id),
+        after_data={"name": company.name},
+    )
+
     return CompanyResponse.model_validate(company)
 
 
@@ -143,21 +159,59 @@ async def invite_member(
     company_id_dep: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    if company_id != company_id_dep:
+    if str(company_id) != str(company_id_dep):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not your company"
         )
-    member = CompanyMember(
+
+    existing = await db.execute(
+        select(Invitation).where(
+            Invitation.company_id == company_id,
+            Invitation.email == data.email,
+            Invitation.status == "pending",
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pending invitation already exists for this email",
+        )
+
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    invitation = Invitation(
         id=uuid4(),
         company_id=company_id,
-        user_id=str(uuid4()),
+        email=data.email,
         role=data.role.value,
-        status="invited",
-        joined_at=datetime.utcnow().isoformat(),
+        token_hash=token_hash,
+        invited_by=str(user.id),
+        status="pending",
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7),
     )
-    db.add(member)
+    db.add(invitation)
     await db.flush()
-    return InvitationResponse.model_validate(member)
+
+    await create_audit_log(
+        db=db,
+        company_id=company_id,
+        user_id=str(user.id),
+        actor_type="user",
+        action="invitation.created",
+        entity_type="invitation",
+        entity_id=str(invitation.id),
+        after_data={"email": data.email, "role": data.role.value},
+    )
+
+    return InvitationResponse(
+        id=invitation.id,
+        company_id=UUID(company_id) if isinstance(company_id, str) else company_id,
+        email=invitation.email,
+        role=data.role,
+        status="pending",
+        joined_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
 
 
 @router.patch("/{company_id}/members/{member_id}", response_model=MemberResponse)
@@ -169,7 +223,7 @@ async def update_member(
     company_id_dep: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    if company_id != company_id_dep:
+    if str(company_id) != str(company_id_dep):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not your company"
         )

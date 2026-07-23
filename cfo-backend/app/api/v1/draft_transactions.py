@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime
+from datetime import datetime, timezone
 from app.database import get_db
 from app.models.draft_transaction import DraftTransaction
 from app.models.user import User
@@ -11,7 +11,8 @@ from app.schemas.draft_transaction import (
     ClarificationRequest,
 )
 from app.dependencies import get_current_user, get_current_company_id
-from app.services.journal import create_journal_entry_from_draft
+from app.services.journal import create_journal_entry_from_draft, JournalError
+from app.services.audit import create_audit_log
 
 router = APIRouter()
 
@@ -68,10 +69,22 @@ async def update_draft(
         raise HTTPException(
             status_code=400, detail="Cannot edit posted or approved transaction"
         )
+    before = {"status": draft.status, "amount": float(draft.amount)}
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(draft, field, value)
     draft.status = "ready_for_review"
     await db.flush()
+    await create_audit_log(
+        db=db,
+        company_id=str(company_id),
+        user_id=str(user.id),
+        actor_type="user",
+        action="draft.updated",
+        entity_type="draft_transaction",
+        entity_id=str(draft.id),
+        before_data=before,
+        after_data={"status": "ready_for_review", "amount": float(draft.amount)},
+    )
     return DraftTransactionResponse.model_validate(draft)
 
 
@@ -95,11 +108,30 @@ async def approve_draft(
 
     draft.status = "approved"
     draft.approved_by = str(user.id)
-    draft.approved_at = datetime.utcnow()
+    draft.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.flush()
-    await create_journal_entry_from_draft(db, draft)
-    draft.status = "posted"
-    await db.flush()
+
+    try:
+        await create_journal_entry_from_draft(db, draft)
+        draft.status = "posted"
+        await db.flush()
+    except JournalError as e:
+        draft.status = "approved"
+        await db.flush()
+        raise HTTPException(status_code=400, detail=e.detail)
+
+    await create_audit_log(
+        db=db,
+        company_id=str(company_id),
+        user_id=str(user.id),
+        actor_type="user",
+        action="draft.approved",
+        entity_type="draft_transaction",
+        entity_id=str(draft.id),
+        before_data={"status": "ready_for_review"},
+        after_data={"status": "posted", "amount": float(draft.amount)},
+    )
+
     return DraftTransactionResponse.model_validate(draft)
 
 
@@ -119,8 +151,20 @@ async def reject_draft(
     draft = result.scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    old_status = draft.status
     draft.status = "rejected"
     await db.flush()
+    await create_audit_log(
+        db=db,
+        company_id=str(company_id),
+        user_id=str(user.id),
+        actor_type="user",
+        action="draft.rejected",
+        entity_type="draft_transaction",
+        entity_id=str(draft.id),
+        before_data={"status": old_status},
+        after_data={"status": "rejected"},
+    )
     return DraftTransactionResponse.model_validate(draft)
 
 

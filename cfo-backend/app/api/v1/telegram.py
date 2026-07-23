@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import uuid4
+from datetime import datetime, timezone
 from app.database import get_db
 from app.config import get_settings
 from app.models.telegram import TelegramConnection, TelegramUpdate
@@ -16,6 +17,7 @@ from app.tasks.telegram_responses import (
     send_telegram_edit,
     answer_telegram_callback,
 )
+from app.services.audit import create_audit_log
 
 router = APIRouter()
 settings = get_settings()
@@ -26,9 +28,10 @@ async def telegram_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret and secret != settings.TELEGRAM_WEBHOOK_SECRET:
-        raise HTTPException(status_code=403, detail="Invalid secret token")
+    if settings.TELEGRAM_WEBHOOK_SECRET:
+        secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        if secret != settings.TELEGRAM_WEBHOOK_SECRET:
+            raise HTTPException(status_code=403, detail="Invalid secret token")
 
     body = await request.json()
     update_id = body.get("update_id")
@@ -56,6 +59,40 @@ async def telegram_webhook(
     connection = result.scalar_one_or_none()
 
     if not connection:
+        connect_result = await db.execute(
+            select(TelegramConnection).where(
+                TelegramConnection.telegram_chat_id == 0,
+                TelegramConnection.status == "pending_chat_id",
+            )
+        )
+        pending = connect_result.scalars().all()
+        if pending:
+            connection = pending[0]
+            connection.telegram_chat_id = chat_id
+            connection.status = "active"
+            await db.flush()
+            send_telegram_response.delay(
+                chat_id,
+                "Connected! I'm now linked to your company.\n\n"
+                "Send me a receipt, invoice, or expense description and I'll extract the financial data.\n\n"
+                "Commands:\n"
+                "/status — Check connection status\n"
+                "/help — Show this message",
+            )
+            update = TelegramUpdate(
+                id=uuid4(),
+                connection_id=str(connection.id),
+                telegram_update_id=update_id,
+                message_id=message.get("message_id"),
+                chat_id=chat_id,
+                update_type="command",
+                payload=body,
+                processing_status="processed",
+            )
+            db.add(update)
+            await db.flush()
+            return {"status": "connected"}
+
         return {"status": "no_connection"}
 
     text = message.get("text", "")
@@ -159,27 +196,65 @@ async def _handle_callback_query(callback_query: dict, db: AsyncSession):
 
     answer_telegram_callback.delay(cb_id)
 
+    conn_result = await db.execute(
+        select(TelegramConnection).where(
+            TelegramConnection.telegram_chat_id == chat_id,
+            TelegramConnection.status == "active",
+        )
+    )
+    connection = conn_result.scalar_one_or_none()
+    if not connection:
+        send_telegram_response.delay(chat_id, "Connection not found.")
+        return {"status": "no_connection"}
+
+    company_id = connection.company_id
+
     if data.startswith("approve:"):
         draft_id = data.split(":", 1)[1]
         result = await db.execute(
-            select(DraftTransaction).where(DraftTransaction.id == draft_id)
+            select(DraftTransaction).where(
+                DraftTransaction.id == draft_id,
+                DraftTransaction.company_id == company_id,
+            )
         )
         draft = result.scalar_one_or_none()
         if draft and draft.status == "ready_for_review":
-            from app.services.journal import create_journal_entry_from_draft
-            from datetime import datetime
+            from app.services.journal import (
+                create_journal_entry_from_draft,
+                JournalError,
+            )
 
             draft.status = "approved"
-            draft.approved_at = datetime.utcnow()
+            draft.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await db.flush()
-            await create_journal_entry_from_draft(db, draft)
-            draft.status = "posted"
-            await db.flush()
-            send_telegram_edit.delay(
-                chat_id,
-                message_id,
-                f"Approved and posted!\nAmount: {draft.currency} {draft.amount}\n{draft.description}",
-            )
+            try:
+                await create_journal_entry_from_draft(db, draft)
+                draft.status = "posted"
+                await db.flush()
+                send_telegram_edit.delay(
+                    chat_id,
+                    message_id,
+                    f"Approved and posted!\nAmount: {draft.currency} {draft.amount}\n{draft.description}",
+                )
+                await create_audit_log(
+                    db=db,
+                    company_id=str(company_id),
+                    user_id=None,
+                    actor_type="telegram",
+                    action="draft.approved",
+                    entity_type="draft_transaction",
+                    entity_id=str(draft.id),
+                    before_data={"status": "ready_for_review"},
+                    after_data={
+                        "status": "posted",
+                        "currency": draft.currency,
+                        "amount": float(draft.amount),
+                    },
+                )
+            except JournalError as e:
+                draft.status = "approved"
+                await db.flush()
+                send_telegram_response.delay(chat_id, f"Approval failed: {e.detail}")
         else:
             send_telegram_response.delay(
                 chat_id, "Draft not found or already processed."
@@ -188,16 +263,31 @@ async def _handle_callback_query(callback_query: dict, db: AsyncSession):
     elif data.startswith("reject:"):
         draft_id = data.split(":", 1)[1]
         result = await db.execute(
-            select(DraftTransaction).where(DraftTransaction.id == draft_id)
+            select(DraftTransaction).where(
+                DraftTransaction.id == draft_id,
+                DraftTransaction.company_id == company_id,
+            )
         )
         draft = result.scalar_one_or_none()
         if draft:
+            old_status = draft.status
             draft.status = "rejected"
             await db.flush()
             send_telegram_edit.delay(
                 chat_id,
                 message_id,
                 f"Rejected.\nAmount: {draft.currency} {draft.amount}\n{draft.description}",
+            )
+            await create_audit_log(
+                db=db,
+                company_id=str(company_id),
+                user_id=None,
+                actor_type="telegram",
+                action="draft.rejected",
+                entity_type="draft_transaction",
+                entity_id=str(draft.id),
+                before_data={"status": old_status},
+                after_data={"status": "rejected"},
             )
         else:
             send_telegram_response.delay(chat_id, "Draft not found.")
