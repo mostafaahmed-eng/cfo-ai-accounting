@@ -59,9 +59,8 @@ class TestAIOutputValidation:
                 "category": 0.9,
             },
         }
-        # This should still work as document_type is just a string
-        result = ExtractionResult(**data)
-        assert result.document_type == "invalid_type"
+        with pytest.raises(ValidationError):
+            ExtractionResult(**data)
 
     def test_zero_amount(self):
         data = {
@@ -83,8 +82,8 @@ class TestAIOutputValidation:
                 "category": 0.5,
             },
         }
-        result = ExtractionResult(**data)
-        assert result.amount == 0.0
+        with pytest.raises(ValidationError):
+            ExtractionResult(**data)
 
     def test_confidence_scores(self):
         data = {

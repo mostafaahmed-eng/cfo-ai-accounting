@@ -10,10 +10,13 @@ export default function InboxPage() {
   const { data: items, isLoading } = useQuery<InboxItem[]>({
     queryKey: ['inbox'],
     queryFn: async () => {
-      // We need to get inbox items - the API returns individual items by ID
-      // For now, display a message that inbox items are created via text/receipt submission
-      return []
+      const { data } = await apiClient.get('/intake')
+      return data
     },
+    refetchInterval: (query) =>
+      query.state.data?.some((item) => ['queued', 'processing'].includes(item.status))
+        ? 3000
+        : false,
   })
 
   return (
@@ -52,12 +55,22 @@ export default function InboxPage() {
                         <td className="p-4 text-sm">{item.detected_language}</td>
                         <td className="p-4 text-sm">
                           <span className={`px-2 py-1 rounded text-xs ${
-                            item.status === 'extracted' ? 'bg-green-100 text-green-800' :
+                            ['extracted', 'completed', 'review_required'].includes(item.status) ? 'bg-green-100 text-green-800' :
                             item.status === 'failed' ? 'bg-red-100 text-red-800' :
                             'bg-yellow-100 text-yellow-800'
                           }`}>
-                            {item.status}
+                            {item.duplicate_status === 'likely_duplicate' || item.duplicate_status === 'exact_duplicate'
+                              ? 'Likely duplicate'
+                              : item.status === 'review_required'
+                                ? 'Ready for review'
+                                : item.status}
                           </span>
+                          {item.error_message && (
+                            <p className="mt-1 text-xs text-red-700">{item.error_message}</p>
+                          )}
+                          {item.duplicate_reason && (
+                            <p className="mt-1 text-xs text-amber-700">{item.duplicate_reason}</p>
+                          )}
                         </td>
                         <td className="p-4 text-sm text-gray-500">
                           {new Date(item.created_at).toLocaleDateString()}

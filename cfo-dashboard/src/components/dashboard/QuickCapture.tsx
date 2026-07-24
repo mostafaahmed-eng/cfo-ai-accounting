@@ -3,14 +3,19 @@
 import { useState } from 'react'
 import apiClient from '@/lib/api-client'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import type { InboxItem } from '@/lib/types'
 
 export default function QuickCapture() {
   const [text, setText] = useState('')
   const queryClient = useQueryClient()
 
-  const mutation = useMutation({
+  const mutation = useMutation<InboxItem>({
     mutationFn: async () => {
-      await apiClient.post('/intake/text', { text })
+      const { data } = await apiClient.post('/intake/text', {
+        text,
+        idempotency_key: crypto.randomUUID(),
+      })
+      return data
     },
     onSuccess: () => {
       setText('')
@@ -39,7 +44,11 @@ export default function QuickCapture() {
         </button>
       </div>
       {mutation.isError && <p className="text-red-600 text-sm mt-2">Failed to submit</p>}
-      {mutation.isSuccess && <p className="text-green-600 text-sm mt-2">Submitted successfully</p>}
+      {mutation.data && (
+        <p className="text-green-600 text-sm mt-2">
+          Submitted: {mutation.data.status === 'queued' ? 'queued for processing' : mutation.data.status}
+        </p>
+      )}
     </div>
   )
 }

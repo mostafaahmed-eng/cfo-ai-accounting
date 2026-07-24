@@ -1,4 +1,12 @@
-from sqlalchemy import Column, String, ForeignKey, DateTime, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    String,
+    ForeignKey,
+    DateTime,
+    Index,
+    Integer,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel, TimestampMixin
@@ -18,6 +26,10 @@ class InboxItem(BaseModel, TimestampMixin):
     error_code = Column(String(50), nullable=True)
     error_message = Column(String, nullable=True)
     idempotency_key = Column(String(255), nullable=True)
+    content_hash = Column(String(64), nullable=True)
+    duplicate_status = Column(String(20), nullable=False, default="unchecked")
+    duplicate_reason = Column(String(255), nullable=True)
+    processing_attempts = Column(Integer, nullable=False, default=0)
     processed_at = Column(DateTime, nullable=True)
 
     company = relationship("Company", back_populates="inbox_items")
@@ -30,4 +42,7 @@ class InboxItem(BaseModel, TimestampMixin):
         "DraftTransaction", back_populates="inbox_item", lazy="noload"
     )
 
-    __table_args__ = (UniqueConstraint("company_id", "source", "idempotency_key"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "source", "idempotency_key"),
+        Index("ix_inbox_items_company_content_hash", "company_id", "content_hash"),
+    )

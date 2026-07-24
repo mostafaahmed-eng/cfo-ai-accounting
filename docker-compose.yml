@@ -1,3 +1,5 @@
+name: ai-cfo-dev
+
 services:
   postgres:
     image: postgres:16-alpine

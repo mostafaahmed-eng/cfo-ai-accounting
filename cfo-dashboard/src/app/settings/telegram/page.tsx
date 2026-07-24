@@ -19,7 +19,8 @@ export default function TelegramSettingsPage() {
 
   const connectMutation = useMutation({
     mutationFn: async () => {
-      await apiClient.post('/integrations/telegram/connect')
+      const { data } = await apiClient.post<TelegramStatus>('/integrations/telegram/connect')
+      return data
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['telegram-status'] })
@@ -74,6 +75,32 @@ export default function TelegramSettingsPage() {
                 >
                   {connectMutation.isPending ? 'Connecting...' : 'Connect Bot'}
                 </button>
+                {connectMutation.data?.pairing_code && (
+                  <div className="rounded border border-blue-200 bg-blue-50 p-4 text-sm">
+                    <p className="font-medium">One-time pairing code</p>
+                    <code className="mt-2 block break-all rounded bg-white p-2">
+                      {connectMutation.data.pairing_code}
+                    </code>
+                    <p className="mt-2 text-gray-600">
+                      Send <code>/start {connectMutation.data.pairing_code}</code> to
+                      @{connectMutation.data.bot_username}. This code is shown only once
+                      and expires at{' '}
+                      {connectMutation.data.pairing_expires_at
+                        ? new Date(connectMutation.data.pairing_expires_at).toLocaleString()
+                        : 'the configured expiry time'}.
+                    </p>
+                    {connectMutation.data.pairing_link && (
+                      <a
+                        className="mt-3 inline-block text-blue-700 underline"
+                        href={connectMutation.data.pairing_link}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open Telegram pairing link
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

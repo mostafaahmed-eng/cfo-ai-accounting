@@ -2,8 +2,14 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_telegram_webhook_duplicate_prevention(client):
-    """Test that webhook skips secret check when TELEGRAM_WEBHOOK_SECRET is empty."""
+async def test_telegram_webhook_duplicate_prevention(client, monkeypatch):
+    from app.api.v1 import telegram
+
+    monkeypatch.setattr(telegram.settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(telegram.settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(
+        telegram.settings, "TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK", True
+    )
     response1 = await client.post(
         "/api/v1/telegram/webhook",
         json={
@@ -22,8 +28,15 @@ async def test_telegram_webhook_duplicate_prevention(client):
 
 
 @pytest.mark.asyncio
-async def test_telegram_webhook_no_secret(client):
-    """Test that webhook accepts when no secret header sent (local dev)."""
+async def test_telegram_webhook_no_secret(client, monkeypatch):
+    """Explicit local development mode accepts a webhook without a secret."""
+    from app.api.v1 import telegram
+
+    monkeypatch.setattr(telegram.settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(telegram.settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(
+        telegram.settings, "TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK", True
+    )
     response = await client.post(
         "/api/v1/telegram/webhook",
         json={
@@ -31,4 +44,4 @@ async def test_telegram_webhook_no_secret(client):
             "message": {"text": "test", "chat": {"id": 99999}},
         },
     )
-    assert response.status_code in (200, 403)
+    assert response.status_code == 200

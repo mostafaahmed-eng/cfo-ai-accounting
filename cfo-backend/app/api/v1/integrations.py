@@ -4,11 +4,12 @@ from sqlalchemy import select
 from uuid import uuid4
 from app.database import get_db
 from app.config import get_settings
-from app.models.telegram import TelegramConnection
+from app.models.telegram import TelegramConnection, TelegramPairing
 from app.models.user import User
 from app.schemas.telegram import TelegramStatusResponse
 from app.dependencies import get_current_user, get_current_company_id
 from app.services.audit import create_audit_log
+from app.services.telegram_pairing import create_pairing
 
 router = APIRouter()
 settings = get_settings()
@@ -27,47 +28,48 @@ async def connect_telegram(
         )
     )
     existing = result.scalar_one_or_none()
-    if existing:
-        if existing.status == "active":
-            return TelegramStatusResponse(
-                connected=True,
-                bot_username=existing.bot_username,
-                chat_id=existing.telegram_chat_id,
-                status="active",
-            )
+    if existing and existing.status == "active":
         return TelegramStatusResponse(
-            connected=False,
+            connected=True,
             bot_username=existing.bot_username,
-            chat_id=0,
-            status="pending",
+            chat_id=existing.telegram_chat_id,
+            status="active",
         )
 
-    connection = TelegramConnection(
-        id=uuid4(),
-        company_id=company_id,
-        bot_username=settings.TELEGRAM_BOT_USERNAME or "bot",
-        telegram_chat_id=0,
-        connected_by=str(user.id),
-        status="pending_chat_id",
-    )
-    db.add(connection)
-    await db.flush()
+    if existing:
+        connection = existing
+    else:
+        connection = TelegramConnection(
+            id=uuid4(),
+            company_id=company_id,
+            bot_username=settings.TELEGRAM_BOT_USERNAME or "bot",
+            telegram_chat_id=None,
+            connected_by=str(user.id),
+            status="pending_chat_id",
+        )
+        db.add(connection)
+        await db.flush()
 
-    await create_audit_log(
-        db=db,
-        company_id=str(company_id),
-        user_id=str(user.id),
-        actor_type="user",
-        action="telegram.connect_requested",
-        entity_type="telegram_connection",
-        entity_id=str(connection.id),
+    pairing_creation = await create_pairing(
+        db,
+        connection=connection,
+        company_id=company_id,
+        user_id=user.id,
+    )
+    pairing_link = (
+        f"https://t.me/{connection.bot_username}?start={pairing_creation.code}"
+        if connection.bot_username and connection.bot_username != "bot"
+        else None
     )
 
     return TelegramStatusResponse(
         connected=False,
         bot_username=connection.bot_username,
-        chat_id=0,
+        chat_id=None,
         status="pending",
+        pairing_code=pairing_creation.code,
+        pairing_link=pairing_link,
+        pairing_expires_at=pairing_creation.pairing.expires_at,
     )
 
 
@@ -87,6 +89,16 @@ async def disconnect_telegram(
     if connection:
         old_status = connection.status
         connection.status = "disabled"
+        pending_pairings = await db.execute(
+            select(TelegramPairing)
+            .where(
+                TelegramPairing.connection_id == connection.id,
+                TelegramPairing.status == "pending",
+            )
+            .with_for_update()
+        )
+        for pairing in pending_pairings.scalars().all():
+            pairing.status = "revoked"
         await db.flush()
         await create_audit_log(
             db=db,

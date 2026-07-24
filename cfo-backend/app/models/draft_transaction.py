@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, ForeignKey, Numeric, Text, DateTime, Date
+from sqlalchemy import Column, String, ForeignKey, Index, Numeric, Text, DateTime, Date
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel, TimestampMixin
@@ -28,6 +28,11 @@ class DraftTransaction(BaseModel, TimestampMixin):
     reference_number = Column(String(100), nullable=True)
     status = Column(String(20), nullable=False, default="draft")
     ai_confidence = Column(Numeric(5, 4), nullable=True)
+    duplicate_status = Column(String(20), nullable=False, default="unchecked")
+    duplicate_reason = Column(String(255), nullable=True)
+    duplicate_of_id = Column(
+        UUID(as_uuid=True), ForeignKey("draft_transactions.id"), nullable=True
+    )
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     approved_at = Column(DateTime, nullable=True)
@@ -44,3 +49,11 @@ class DraftTransaction(BaseModel, TimestampMixin):
     )
     creator = relationship("User", foreign_keys=[created_by], lazy="noload")
     approver = relationship("User", foreign_keys=[approved_by], lazy="noload")
+
+    __table_args__ = (
+        Index(
+            "ix_draft_transactions_company_duplicate",
+            "company_id",
+            "duplicate_status",
+        ),
+    )

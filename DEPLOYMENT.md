@@ -24,6 +24,9 @@ ENCRYPTION_KEY=<32-byte-base64>
 POSTGRES_PASSWORD=<strong-password>
 OPENROUTER_API_KEY=<your-key>
 TELEGRAM_BOT_TOKEN=<your-token>
+TELEGRAM_BOT_USERNAME=<your-bot-username>
+TELEGRAM_WEBHOOK_SECRET=<random-webhook-secret>
+TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK=false
 ```
 
 ### 3. Deploy
@@ -114,6 +117,12 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://yourdomain.com/api/v1/telegram/webhook", "secret_token": "<TELEGRAM_WEBHOOK_SECRET>"}'
 ```
+
+`TELEGRAM_WEBHOOK_SECRET` is mandatory outside the explicit local-development
+bypass. Keep `TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK=false` in staging and production.
+To connect a company, request a pairing link from Telegram Settings and send the
+generated `/start <single-use-code>` command to the configured bot before the code
+expires. Pairing codes are returned once and only their hashes are stored.
 
 ## Monitoring
 

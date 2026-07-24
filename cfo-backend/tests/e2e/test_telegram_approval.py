@@ -2,7 +2,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_telegram_transaction_approval(client):
+async def test_telegram_transaction_approval(client, monkeypatch):
     """E2E: Approve a Telegram transaction.
 
     Flow:
@@ -13,8 +13,13 @@ async def test_telegram_transaction_approval(client):
     5. User approves
     6. Journal entry created
     """
-    # When TELEGRAM_WEBHOOK_SECRET is empty (local dev), webhook accepts without secret
-    # When TELEGRAM_WEBHOOK_SECRET is set, missing/wrong secret returns 403
+    from app.api.v1 import telegram
+
+    monkeypatch.setattr(telegram.settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(telegram.settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(
+        telegram.settings, "TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK", True
+    )
     webhook_resp = await client.post(
         "/api/v1/telegram/webhook",
         json={
@@ -26,7 +31,7 @@ async def test_telegram_transaction_approval(client):
             },
         },
     )
-    assert webhook_resp.status_code in (200, 403)
+    assert webhook_resp.status_code == 200
 
     # Verify integration status requires auth
     status_resp = await client.get("/api/v1/integrations/telegram/status")

@@ -21,12 +21,14 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBHOOK_SECRET: str = ""
     TELEGRAM_BOT_USERNAME: str = ""
+    TELEGRAM_PAIRING_TTL_MINUTES: int = 15
+    TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK: bool = False
     ENCRYPTION_KEY: str = ""
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
+    MAX_PDF_PAGES: int = 20
     ALLOWED_MIME_TYPES: list[str] = [
         "image/jpeg",
         "image/png",
-        "image/webp",
         "application/pdf",
     ]
     ALLOWED_ORIGINS: str = "http://localhost:3000"

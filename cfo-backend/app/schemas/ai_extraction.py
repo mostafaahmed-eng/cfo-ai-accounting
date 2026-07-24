@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uuid import UUID
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 
 class VendorInfo(BaseModel):
@@ -10,22 +10,22 @@ class VendorInfo(BaseModel):
 
 
 class ConfidenceScores(BaseModel):
-    overall: float
-    amount: float
-    currency: float
-    date: float
-    category: float
+    overall: float = Field(ge=0, le=1)
+    amount: float = Field(ge=0, le=1)
+    currency: float = Field(ge=0, le=1)
+    date: float = Field(ge=0, le=1)
+    category: float = Field(ge=0, le=1)
 
 
 class ExtractionResult(BaseModel):
-    document_type: str
-    transaction_type: str
-    amount: float
-    tax_amount: float | None = 0
-    currency: str
+    document_type: Literal["receipt", "invoice", "text_transaction", "unknown"]
+    transaction_type: Literal["expense", "income", "transfer"]
+    amount: float = Field(gt=0)
+    tax_amount: float | None = Field(default=0, ge=0)
+    currency: str = Field(min_length=3, max_length=3)
     transaction_date: date
     vendor: VendorInfo
-    description: str
+    description: str = Field(min_length=1)
     category_hint: str | None = None
     payment_method_hint: str | None = None
     reference_number: str | None = None

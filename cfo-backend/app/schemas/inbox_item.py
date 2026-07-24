@@ -1,10 +1,10 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uuid import UUID
 from datetime import datetime
 
 
 class TextInput(BaseModel):
-    text: str
+    text: str = Field(min_length=1, max_length=100_000)
     language: str | None = None
     idempotency_key: str | None = None
 
@@ -21,5 +21,7 @@ class InboxItemResponse(BaseModel):
     error_message: str | None
     created_at: datetime
     processed_at: datetime | None
+    duplicate_status: str
+    duplicate_reason: str | None
 
     model_config = {"from_attributes": True}

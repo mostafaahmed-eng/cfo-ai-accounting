@@ -1,0 +1,552 @@
+import json
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import select
+
+from app.api.v1 import telegram as telegram_api
+from app.models.audit_log import AuditLog
+from app.enums import UserStatus
+from app.models.company import Company, CompanyMember
+from app.models.inbox_item import InboxItem
+from app.models.telegram import TelegramConnection, TelegramPairing, TelegramUpdate
+from app.models.user import User
+from app.services.telegram_pairing import create_pairing
+
+FAKE_WEBHOOK_SECRET = "fake-test-webhook-secret"
+
+
+@pytest.fixture(autouse=True)
+def _fake_telegram(monkeypatch):
+    monkeypatch.setattr(telegram_api.settings, "ENVIRONMENT", "test")
+    monkeypatch.setattr(
+        telegram_api.settings, "TELEGRAM_WEBHOOK_SECRET", FAKE_WEBHOOK_SECRET
+    )
+    monkeypatch.setattr(
+        telegram_api.settings, "TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK", False
+    )
+    monkeypatch.setattr(
+        telegram_api.send_telegram_response, "delay", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        telegram_api.send_telegram_edit, "delay", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        telegram_api.answer_telegram_callback, "delay", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        telegram_api.run_ai_extraction, "delay", lambda *args, **kwargs: None
+    )
+
+
+def _webhook_headers(secret=FAKE_WEBHOOK_SECRET):
+    return {"X-Telegram-Bot-Api-Secret-Token": secret}
+
+
+def _start_update(update_id: int, chat_id: int, code: str | None):
+    text = "/start" if code is None else f"/start {code}"
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id,
+            "chat": {"id": chat_id},
+            "text": text,
+        },
+    }
+
+
+async def _request_pairing(client, db_session, company_id, headers):
+    membership_result = await db_session.execute(
+        select(CompanyMember).where(CompanyMember.company_id == company_id)
+    )
+    membership = membership_result.scalar_one()
+    user_result = await db_session.execute(
+        select(User).where(User.id == membership.user_id)
+    )
+    user_result.scalar_one().status = UserStatus.active
+    await db_session.flush()
+
+    response = await client.post(
+        "/api/v1/integrations/telegram/connect", headers=headers
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["connected"] is False
+    assert payload["status"] == "pending"
+    assert payload["pairing_code"]
+    assert payload["chat_id"] is None
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_successful_pairing_records_numeric_chat_id(
+    client, db_session, _setup_company_and_user
+):
+    company_id, _, headers = _setup_company_and_user
+    pairing = await _request_pairing(client, db_session, company_id, headers)
+
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json=_start_update(20001, 987654321, pairing["pairing_code"]),
+        headers=_webhook_headers(),
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "connected"}
+
+    result = await db_session.execute(
+        select(TelegramConnection).where(TelegramConnection.company_id == company_id)
+    )
+    connection = result.scalar_one()
+    assert connection.status == "active"
+    assert connection.telegram_chat_id == 987654321
+    assert isinstance(connection.telegram_chat_id, int)
+
+    pairing_result = await db_session.execute(
+        select(TelegramPairing).where(TelegramPairing.connection_id == connection.id)
+    )
+    pairing_row = pairing_result.scalar_one()
+    assert pairing_row.status == "consumed"
+    assert pairing_row.consumed_by_chat_id == 987654321
+    assert pairing_row.consumed_at is not None
+    assert pairing_row.secret_hash != pairing["pairing_code"]
+    assert len(pairing_row.secret_hash) == 64
+
+    update_result = await db_session.execute(
+        select(TelegramUpdate).where(TelegramUpdate.telegram_update_id == 20001)
+    )
+    stored_update = update_result.scalar_one()
+    assert stored_update.payload["message"]["text"] == "/start [REDACTED]"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "update_id"),
+    [
+        (None, 20002),
+        ("bad code!", 20003),
+        ("A" * 43, 20004),
+    ],
+)
+async def test_missing_malformed_and_unknown_pairing_codes_do_not_connect(
+    client, db_session, _setup_company_and_user, code, update_id
+):
+    company_id, _, headers = _setup_company_and_user
+    await _request_pairing(client, db_session, company_id, headers)
+
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json=_start_update(update_id, 111000 + update_id, code),
+        headers=_webhook_headers(),
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "pairing_failed"}
+
+    connection_result = await db_session.execute(
+        select(TelegramConnection).where(TelegramConnection.company_id == company_id)
+    )
+    connection = connection_result.scalar_one()
+    assert connection.status == "pending_chat_id"
+    assert connection.telegram_chat_id is None
+
+
+@pytest.mark.asyncio
+async def test_expired_pairing_code_is_rejected(
+    client, db_session, _setup_company_and_user
+):
+    company_id, _, headers = _setup_company_and_user
+    pairing = await _request_pairing(client, db_session, company_id, headers)
+    result = await db_session.execute(
+        select(TelegramPairing).where(TelegramPairing.company_id == company_id)
+    )
+    pairing_row = result.scalar_one()
+    pairing_row.expires_at = datetime.now(timezone.utc).replace(
+        tzinfo=None
+    ) - timedelta(seconds=1)
+    await db_session.flush()
+
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json=_start_update(20005, 555001, pairing["pairing_code"]),
+        headers=_webhook_headers(),
+    )
+    assert response.json() == {"status": "pairing_failed"}
+    assert pairing_row.status == "expired"
+
+
+@pytest.mark.asyncio
+async def test_pairing_code_is_single_use_across_two_chats(
+    client, db_session, _setup_company_and_user
+):
+    company_id, _, headers = _setup_company_and_user
+    pairing = await _request_pairing(client, db_session, company_id, headers)
+
+    first = await client.post(
+        "/api/v1/telegram/webhook",
+        json=_start_update(20006, 600001, pairing["pairing_code"]),
+        headers=_webhook_headers(),
+    )
+    second = await client.post(
+        "/api/v1/telegram/webhook",
+        json=_start_update(20007, 600002, pairing["pairing_code"]),
+        headers=_webhook_headers(),
+    )
+    assert first.json() == {"status": "connected"}
+    assert second.json() == {"status": "pairing_failed"}
+
+    result = await db_session.execute(
+        select(TelegramConnection).where(TelegramConnection.company_id == company_id)
+    )
+    connection = result.scalar_one()
+    assert connection.telegram_chat_id == 600001
+
+    pairing_result = await db_session.execute(
+        select(TelegramPairing).where(TelegramPairing.connection_id == connection.id)
+    )
+    pairing_row = pairing_result.scalar_one()
+    assert pairing_row.status == "consumed"
+    assert pairing_row.consumed_by_chat_id == 600001
+    assert pairing_row.failed_attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_stranger_message_cannot_claim_pending_company(
+    client, db_session, _setup_company_and_user
+):
+    company_id, _, headers = _setup_company_and_user
+    await _request_pairing(client, db_session, company_id, headers)
+
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json={
+            "update_id": 20008,
+            "message": {
+                "message_id": 8,
+                "chat": {"id": 700001},
+                "text": "hello",
+            },
+        },
+        headers=_webhook_headers(),
+    )
+    assert response.json() == {"status": "no_connection"}
+
+    result = await db_session.execute(
+        select(TelegramConnection).where(TelegramConnection.company_id == company_id)
+    )
+    connection = result.scalar_one()
+    assert connection.status == "pending_chat_id"
+    assert connection.telegram_chat_id is None
+
+
+@pytest.mark.asyncio
+async def test_pairing_code_binds_only_its_connection_and_company(
+    client, db_session, _setup_company_and_user
+):
+    first_company_id, _, headers = _setup_company_and_user
+    first_pairing = await _request_pairing(
+        client, db_session, first_company_id, headers
+    )
+
+    other_company = Company(
+        id=uuid4(),
+        name="Other Pairing Company",
+        country_code="US",
+        base_currency="USD",
+        fiscal_year_start=1,
+        timezone="UTC",
+    )
+    db_session.add(other_company)
+    await db_session.flush()
+
+    first_connection_result = await db_session.execute(
+        select(TelegramConnection).where(
+            TelegramConnection.company_id == first_company_id
+        )
+    )
+    first_connection = first_connection_result.scalar_one()
+    other_connection = TelegramConnection(
+        id=uuid4(),
+        company_id=other_company.id,
+        bot_username="testbot",
+        telegram_chat_id=None,
+        connected_by=first_connection.connected_by,
+        status="pending_chat_id",
+    )
+    db_session.add(other_connection)
+    await db_session.flush()
+    await create_pairing(
+        db_session,
+        connection=other_connection,
+        company_id=other_company.id,
+        user_id=first_connection.connected_by,
+    )
+
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json=_start_update(20009, 800001, first_pairing["pairing_code"]),
+        headers=_webhook_headers(),
+    )
+    assert response.json() == {"status": "connected"}
+    assert first_connection.telegram_chat_id == 800001
+    assert first_connection.status == "active"
+    assert other_connection.telegram_chat_id is None
+    assert other_connection.status == "pending_chat_id"
+
+
+@pytest.mark.asyncio
+async def test_webhook_secret_required_outside_explicit_local_development(
+    client, monkeypatch
+):
+    monkeypatch.setattr(telegram_api.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(telegram_api.settings, "TELEGRAM_WEBHOOK_SECRET", "")
+
+    missing_config = await client.post(
+        "/api/v1/telegram/webhook",
+        json={"update_id": 20010},
+    )
+    assert missing_config.status_code == 503
+
+    monkeypatch.setattr(
+        telegram_api.settings, "TELEGRAM_WEBHOOK_SECRET", FAKE_WEBHOOK_SECRET
+    )
+    missing = await client.post(
+        "/api/v1/telegram/webhook",
+        json={"update_id": 20011},
+    )
+    incorrect = await client.post(
+        "/api/v1/telegram/webhook",
+        json={"update_id": 20012},
+        headers=_webhook_headers("wrong-secret"),
+    )
+    valid = await client.post(
+        "/api/v1/telegram/webhook",
+        json={"update_id": 20013},
+        headers=_webhook_headers(),
+    )
+    assert missing.status_code == 403
+    assert incorrect.status_code == 403
+    assert valid.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_explicit_local_development_webhook_bypass(client, monkeypatch):
+    monkeypatch.setattr(telegram_api.settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(telegram_api.settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(
+        telegram_api.settings, "TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK", True
+    )
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json={"update_id": 20014},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_cross_company_extract_callback_is_denied(
+    db_session, _setup_company_and_user
+):
+    company_id, user_id, _ = _setup_company_and_user
+    connection = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="testbot",
+        telegram_chat_id=900001,
+        connected_by=user_id,
+        status="active",
+    )
+    other_company = Company(
+        id=uuid4(),
+        name="Other Extract Company",
+        country_code="US",
+        base_currency="USD",
+        fiscal_year_start=1,
+        timezone="UTC",
+    )
+    db_session.add_all([connection, other_company])
+    await db_session.flush()
+    other_item = InboxItem(
+        id=uuid4(),
+        company_id=other_company.id,
+        source="web_text",
+        content_type="text",
+        original_text="private",
+        status="received",
+    )
+    db_session.add(other_item)
+    await db_session.flush()
+
+    dispatched = []
+    original_delay = telegram_api.run_ai_extraction.delay
+    telegram_api.run_ai_extraction.delay = lambda item_id: dispatched.append(item_id)
+    try:
+        result = await telegram_api._handle_callback_query(
+            {
+                "id": "extract-cross-company",
+                "data": f"extract:{other_item.id}",
+                "message": {"chat": {"id": 900001}, "message_id": 1},
+            },
+            db_session,
+        )
+    finally:
+        telegram_api.run_ai_extraction.delay = original_delay
+
+    assert result == {"status": "ok"}
+    assert dispatched == []
+    audit_result = await db_session.execute(
+        select(AuditLog).where(AuditLog.action == "telegram.callback_extract")
+    )
+    audit = audit_result.scalar_one()
+    assert audit.company_id == company_id
+    assert audit.after_data["status"] == "denied"
+
+
+@pytest.mark.asyncio
+async def test_valid_approval_callback_remains_scoped_and_audited(
+    db_session, _setup_company_and_user
+):
+    from app.models.account import Account
+    from app.models.draft_transaction import DraftTransaction
+
+    company_id, user_id, _ = _setup_company_and_user
+    connection = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="testbot",
+        telegram_chat_id=905001,
+        connected_by=user_id,
+        status="active",
+    )
+    expense_account = Account(
+        id=uuid4(),
+        company_id=company_id,
+        code="5990",
+        name_en="Callback Expense",
+        type="expense",
+        subtype="general",
+        is_active=True,
+    )
+    payment_account = Account(
+        id=uuid4(),
+        company_id=company_id,
+        code="1090",
+        name_en="Callback Cash",
+        type="asset",
+        subtype="cash",
+        is_active=True,
+    )
+    draft = DraftTransaction(
+        id=uuid4(),
+        company_id=company_id,
+        type="expense",
+        amount=10,
+        currency="USD",
+        transaction_date=datetime.now(timezone.utc).date(),
+        description="Approve me",
+        category_account_id=expense_account.id,
+        payment_account_id=payment_account.id,
+        status="ready_for_review",
+    )
+    db_session.add_all([connection, expense_account, payment_account, draft])
+    await db_session.flush()
+
+    result = await telegram_api._handle_callback_query(
+        {
+            "id": "approve-valid",
+            "data": f"approve:{draft.id}",
+            "message": {"chat": {"id": 905001}, "message_id": 2},
+        },
+        db_session,
+    )
+    assert result == {"status": "ok"}
+    assert draft.status == "posted"
+
+    audit_result = await db_session.execute(
+        select(AuditLog).where(AuditLog.action == "telegram.callback_approve")
+    )
+    assert audit_result.scalar_one().after_data["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_valid_reject_callback_remains_scoped_and_audited(
+    db_session, _setup_company_and_user
+):
+    from app.models.draft_transaction import DraftTransaction
+
+    company_id, user_id, _ = _setup_company_and_user
+    connection = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="testbot",
+        telegram_chat_id=910001,
+        connected_by=user_id,
+        status="active",
+    )
+    draft = DraftTransaction(
+        id=uuid4(),
+        company_id=company_id,
+        type="expense",
+        amount=10,
+        currency="USD",
+        transaction_date=datetime.now(timezone.utc).date(),
+        description="Reject me",
+        status="ready_for_review",
+    )
+    db_session.add_all([connection, draft])
+    await db_session.flush()
+
+    result = await telegram_api._handle_callback_query(
+        {
+            "id": "reject-valid",
+            "data": f"reject:{draft.id}",
+            "message": {"chat": {"id": 910001}, "message_id": 2},
+        },
+        db_session,
+    )
+    assert result == {"status": "ok"}
+    assert draft.status == "rejected"
+
+    audit_result = await db_session.execute(
+        select(AuditLog).where(AuditLog.action == "telegram.callback_reject")
+    )
+    assert audit_result.scalar_one().after_data["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_pairing_audit_records_never_contain_raw_code(
+    client, db_session, _setup_company_and_user
+):
+    company_id, _, headers = _setup_company_and_user
+    pairing = await _request_pairing(client, db_session, company_id, headers)
+    raw_code = pairing["pairing_code"]
+
+    await client.post(
+        "/api/v1/telegram/webhook",
+        json=_start_update(20015, 920001, raw_code),
+        headers=_webhook_headers(),
+    )
+    await client.post(
+        "/api/v1/telegram/webhook",
+        json=_start_update(20016, 920002, raw_code),
+        headers=_webhook_headers(),
+    )
+
+    audit_result = await db_session.execute(
+        select(AuditLog).where(AuditLog.action.like("telegram.pairing_%"))
+    )
+    logs = audit_result.scalars().all()
+    assert {log.action for log in logs} >= {
+        "telegram.pairing_created",
+        "telegram.pairing_succeeded",
+        "telegram.pairing_failed",
+    }
+    for log in logs:
+        serialized = json.dumps(
+            {
+                "entity_id": log.entity_id,
+                "before": log.before_data,
+                "after": log.after_data,
+            },
+            default=str,
+        )
+        assert raw_code not in serialized

@@ -1,4 +1,12 @@
-from sqlalchemy import Column, String, ForeignKey, BigInteger, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    String,
+    ForeignKey,
+    BigInteger,
+    UniqueConstraint,
+    DateTime,
+    Index,
+)
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel, TimestampMixin
@@ -9,7 +17,7 @@ class TelegramConnection(BaseModel, TimestampMixin):
 
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
     bot_username = Column(String(100), nullable=False)
-    telegram_chat_id = Column(BigInteger, nullable=False)
+    telegram_chat_id = Column(BigInteger, nullable=True)
     connected_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     status = Column(String(20), nullable=False, default="active")
 
@@ -17,6 +25,35 @@ class TelegramConnection(BaseModel, TimestampMixin):
     connector = relationship("User", foreign_keys=[connected_by], lazy="noload")
 
     __table_args__ = (UniqueConstraint("telegram_chat_id"),)
+
+
+class TelegramPairing(BaseModel, TimestampMixin):
+    __tablename__ = "telegram_pairings"
+
+    connection_id = Column(
+        UUID(as_uuid=True), ForeignKey("telegram_connections.id"), nullable=False
+    )
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    secret_hash = Column(String(64), nullable=False, unique=True, index=True)
+    status = Column(String(20), nullable=False, default="pending")
+    expires_at = Column(DateTime, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+    consumed_by_chat_id = Column(BigInteger, nullable=True)
+    failed_attempts = Column(BigInteger, nullable=False, default=0)
+    last_failed_at = Column(DateTime, nullable=True)
+
+    connection = relationship("TelegramConnection", lazy="noload")
+    company = relationship("Company", lazy="noload")
+    creator = relationship("User", foreign_keys=[created_by], lazy="noload")
+
+    __table_args__ = (
+        Index(
+            "ix_telegram_pairings_connection_status",
+            "connection_id",
+            "status",
+        ),
+    )
 
 
 class TelegramUpdate(BaseModel, TimestampMixin):

@@ -33,6 +33,10 @@ class StorageClient:
             ExpiresIn=expires_in,
         )
 
+    async def download_file(self, key: str) -> bytes:
+        response = self.s3.get_object(Bucket=self.bucket, Key=key)
+        return response["Body"].read()
+
     async def delete_file(self, key: str):
         self.s3.delete_object(Bucket=self.bucket, Key=key)
 

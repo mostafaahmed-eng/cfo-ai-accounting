@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from uuid import uuid4
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
+import copy
+import secrets
 from app.database import get_db
 from app.config import get_settings
 from app.models.telegram import TelegramConnection, TelegramUpdate
@@ -18,9 +20,41 @@ from app.tasks.telegram_responses import (
     answer_telegram_callback,
 )
 from app.services.audit import create_audit_log
+from app.services.telegram_pairing import consume_pairing
+from app.services.intake import create_text_inbox
+from app.core.text_processing import detect_language
 
 router = APIRouter()
 settings = get_settings()
+
+
+def _verify_webhook_secret(request: Request) -> None:
+    insecure_local = (
+        settings.ENVIRONMENT == "development"
+        and settings.TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK
+    )
+    if insecure_local:
+        return
+
+    expected = settings.TELEGRAM_WEBHOOK_SECRET
+    if not expected:
+        raise HTTPException(
+            status_code=503, detail="Telegram webhook authentication is not configured"
+        )
+
+    supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="Invalid secret token")
+
+
+def _sanitized_update_payload(body: dict) -> dict:
+    sanitized = copy.deepcopy(body)
+    message = sanitized.get("message")
+    if isinstance(message, dict):
+        text = message.get("text")
+        if isinstance(text, str) and text.startswith("/start"):
+            message["text"] = "/start [REDACTED]"
+    return sanitized
 
 
 @router.post("/webhook")
@@ -28,10 +62,7 @@ async def telegram_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    if settings.TELEGRAM_WEBHOOK_SECRET:
-        secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-        if secret != settings.TELEGRAM_WEBHOOK_SECRET:
-            raise HTTPException(status_code=403, detail="Invalid secret token")
+    _verify_webhook_secret(request)
 
     body = await request.json()
     update_id = body.get("update_id")
@@ -59,18 +90,20 @@ async def telegram_webhook(
     connection = result.scalar_one_or_none()
 
     if not connection:
-        connect_result = await db.execute(
-            select(TelegramConnection).where(
-                TelegramConnection.telegram_chat_id == 0,
-                TelegramConnection.status == "pending_chat_id",
-            )
-        )
-        pending = connect_result.scalars().all()
-        if pending:
-            connection = pending[0]
-            connection.telegram_chat_id = chat_id
-            connection.status = "active"
-            await db.flush()
+        text = message.get("text", "")
+        if text.startswith("/start"):
+            parts = text.split(maxsplit=1)
+            code = parts[1].strip() if len(parts) == 2 else ""
+            pairing_result = await consume_pairing(db, code=code, chat_id=chat_id)
+            if not pairing_result.succeeded:
+                send_telegram_response.delay(
+                    chat_id,
+                    "Unable to connect. Request a new pairing link from the dashboard.",
+                )
+                return {"status": "pairing_failed"}
+
+            connection = pairing_result.connection
+            assert connection is not None
             send_telegram_response.delay(
                 chat_id,
                 "Connected! I'm now linked to your company.\n\n"
@@ -86,7 +119,7 @@ async def telegram_webhook(
                 message_id=message.get("message_id"),
                 chat_id=chat_id,
                 update_type="command",
-                payload=body,
+                payload=_sanitized_update_payload(body),
                 processing_status="processed",
             )
             db.add(update)
@@ -113,7 +146,7 @@ async def telegram_webhook(
             message_id=message.get("message_id"),
             chat_id=chat_id,
             update_type="command",
-            payload=body,
+            payload=_sanitized_update_payload(body),
             processing_status="processed",
         )
         db.add(update)
@@ -151,23 +184,25 @@ async def telegram_webhook(
     db.add(update)
 
     if text:
-        item = InboxItem(
-            id=uuid4(),
+        creation = await create_text_inbox(
+            db,
             company_id=connection.company_id,
+            text=text,
+            language=detect_language(text),
             source="telegram",
-            content_type="text",
-            original_text=text,
-            status="received",
+            source_reference=str(update_id),
         )
-        db.add(item)
-        await db.flush()
+        item = creation.item
 
         send_telegram_response.delay(
             chat_id, "Processing your message... I'll extract financial data shortly."
         )
-        run_ai_extraction.delay(str(item.id))
         update.inbox_item_id = str(item.id)
         update.processing_status = "dispatched"
+        await db.flush()
+        await db.commit()
+        if creation.created:
+            run_ai_extraction.delay(str(item.id))
     else:
         content_types = ["photo", "document", "voice"]
         for ct in content_types:
@@ -251,13 +286,37 @@ async def _handle_callback_query(callback_query: dict, db: AsyncSession):
                         "amount": float(draft.amount),
                     },
                 )
+                await _audit_callback(
+                    db,
+                    connection=connection,
+                    action="approve",
+                    target_type="draft_transaction",
+                    target_id=str(draft.id),
+                    status="succeeded",
+                )
             except JournalError as e:
                 draft.status = "approved"
                 await db.flush()
                 send_telegram_response.delay(chat_id, f"Approval failed: {e.detail}")
+                await _audit_callback(
+                    db,
+                    connection=connection,
+                    action="approve",
+                    target_type="draft_transaction",
+                    target_id=str(draft.id),
+                    status="failed",
+                )
         else:
             send_telegram_response.delay(
                 chat_id, "Draft not found or already processed."
+            )
+            await _audit_callback(
+                db,
+                connection=connection,
+                action="approve",
+                target_type="draft_transaction",
+                target_id=draft_id,
+                status="denied",
             )
 
     elif data.startswith("reject:"):
@@ -289,23 +348,109 @@ async def _handle_callback_query(callback_query: dict, db: AsyncSession):
                 before_data={"status": old_status},
                 after_data={"status": "rejected"},
             )
+            await _audit_callback(
+                db,
+                connection=connection,
+                action="reject",
+                target_type="draft_transaction",
+                target_id=str(draft.id),
+                status="succeeded",
+            )
         else:
             send_telegram_response.delay(chat_id, "Draft not found.")
+            await _audit_callback(
+                db,
+                connection=connection,
+                action="reject",
+                target_type="draft_transaction",
+                target_id=draft_id,
+                status="denied",
+            )
 
     elif data.startswith("edit:"):
         draft_id = data.split(":", 1)[1]
-        send_telegram_response.delay(
-            chat_id,
-            f"To edit draft {draft_id[:8]}..., please use the web dashboard.\n"
-            f"Or send a correction message describing what should change.",
+        result = await db.execute(
+            select(DraftTransaction).where(
+                DraftTransaction.id == draft_id,
+                DraftTransaction.company_id == company_id,
+            )
+        )
+        draft = result.scalar_one_or_none()
+        if draft:
+            send_telegram_response.delay(
+                chat_id,
+                f"To edit draft {draft_id[:8]}..., please use the web dashboard.\n"
+                f"Or send a correction message describing what should change.",
+            )
+            callback_status = "succeeded"
+        else:
+            send_telegram_response.delay(chat_id, "Draft not found.")
+            callback_status = "denied"
+        await _audit_callback(
+            db,
+            connection=connection,
+            action="edit",
+            target_type="draft_transaction",
+            target_id=draft_id,
+            status=callback_status,
         )
 
     elif data.startswith("extract:"):
         inbox_item_id = data.split(":", 1)[1]
-        run_ai_extraction.delay(inbox_item_id)
-        send_telegram_response.delay(chat_id, "Re-running extraction...")
+        try:
+            inbox_uuid = UUID(inbox_item_id)
+        except (TypeError, ValueError):
+            inbox_uuid = None
+        inbox_item = None
+        if inbox_uuid:
+            inbox_result = await db.execute(
+                select(InboxItem).where(
+                    InboxItem.id == inbox_uuid,
+                    InboxItem.company_id == company_id,
+                )
+            )
+            inbox_item = inbox_result.scalar_one_or_none()
+        if inbox_item:
+            run_ai_extraction.delay(str(inbox_item.id))
+            send_telegram_response.delay(chat_id, "Re-running extraction...")
+            callback_status = "succeeded"
+        else:
+            send_telegram_response.delay(chat_id, "Inbox item not found.")
+            callback_status = "denied"
+        await _audit_callback(
+            db,
+            connection=connection,
+            action="extract",
+            target_type="inbox_item",
+            target_id=inbox_item_id,
+            status=callback_status,
+        )
 
     return {"status": "ok"}
+
+
+async def _audit_callback(
+    db: AsyncSession,
+    *,
+    connection: TelegramConnection,
+    action: str,
+    target_type: str,
+    target_id: str,
+    status: str,
+) -> None:
+    await create_audit_log(
+        db=db,
+        company_id=str(connection.company_id),
+        user_id=None,
+        actor_type="telegram",
+        action=f"telegram.callback_{action}",
+        entity_type=target_type,
+        entity_id=target_id,
+        after_data={
+            "connection_id": str(connection.id),
+            "status": status,
+        },
+    )
 
 
 @router.get("/status", response_model=TelegramStatusResponse)

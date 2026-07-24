@@ -91,7 +91,6 @@ async def extract_from_text(text: str, language: str = "en") -> dict:
         "output_tokens": output_tokens,
         "estimated_cost": estimated_cost,
         "processing_ms": elapsed_ms,
-        "raw_response": result,
     }
 
 

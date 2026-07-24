@@ -11,6 +11,10 @@ apiClient.interceptors.request.use((config) => {
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
+    const companyId = localStorage.getItem('selected_company_id')
+    if (companyId) {
+      config.headers['X-Company-ID'] = companyId
+    }
   }
   return config
 })
@@ -20,6 +24,7 @@ apiClient.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401 && typeof window !== 'undefined') {
       localStorage.removeItem('token')
+      localStorage.removeItem('selected_company_id')
       window.location.href = '/'
     }
     return Promise.reject(error)

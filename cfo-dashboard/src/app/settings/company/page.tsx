@@ -19,6 +19,7 @@ export default function CompanySettingsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['company'] })
+      queryClient.invalidateQueries({ queryKey: ['company-memberships'] })
     },
   })
 

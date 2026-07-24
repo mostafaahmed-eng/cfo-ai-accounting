@@ -28,6 +28,13 @@ class CompanyResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CompanyMembershipResponse(BaseModel):
+    membership_id: UUID
+    company_id: UUID
+    company_name: str
+    role: UserRole
+
+
 class InvitationCreate(BaseModel):
     email: str
     role: UserRole

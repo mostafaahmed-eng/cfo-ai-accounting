@@ -20,6 +20,13 @@ export interface Company {
   created_at: string
 }
 
+export interface CompanyMembership {
+  membership_id: string
+  company_id: string
+  company_name: string
+  role: 'OWNER' | 'ADMIN' | 'ACCOUNTANT' | 'APPROVER' | 'VIEWER'
+}
+
 export interface Account {
   id: string
   company_id: string
@@ -43,16 +50,19 @@ export interface InboxItem {
   content_type: 'text' | 'image' | 'document'
   original_text: string | null
   detected_language: string
-  status: 'received' | 'processing' | 'extracted' | 'failed' | 'archived'
+  status: 'received' | 'queued' | 'processing' | 'review_required' | 'completed' | 'extracted' | 'failed' | 'archived'
   error_code: string | null
   error_message: string | null
   created_at: string
   processed_at: string | null
+  duplicate_status: 'unchecked' | 'unique' | 'likely_duplicate' | 'exact_duplicate'
+  duplicate_reason: string | null
 }
 
 export interface Document {
   id: string
   company_id: string
+  inbox_item_id: string | null
   original_name: string
   mime_type: string
   size_bytes: number
@@ -253,4 +263,7 @@ export interface TelegramStatus {
   bot_username: string | null
   chat_id: number | null
   status: string | null
+  pairing_code?: string | null
+  pairing_link?: string | null
+  pairing_expires_at?: string | null
 }

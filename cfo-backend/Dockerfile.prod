@@ -23,9 +23,10 @@ COPY --from=builder /install /usr/local
 
 WORKDIR /app
 
-COPY . .
+COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser alembic ./alembic
+COPY --chown=appuser:appuser alembic.ini ./
 
-RUN chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000

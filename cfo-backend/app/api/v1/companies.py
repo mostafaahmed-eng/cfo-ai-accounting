@@ -12,15 +12,20 @@ from app.models.account import Account
 from app.models.invitation import Invitation
 from app.schemas.company import (
     CompanyCreate,
+    CompanyMembershipResponse,
     CompanyResponse,
     InvitationCreate,
     InvitationResponse,
     MemberUpdate,
     MemberResponse,
 )
-from app.dependencies import get_current_user, get_current_company_id
+from app.dependencies import get_current_company_membership, get_current_user
 from app.enums import UserRole, AccountType
 from app.services.audit import create_audit_log
+from app.services.company_authorization import (
+    authorize_member_update,
+    require_company_administrator,
+)
 
 router = APIRouter()
 
@@ -151,17 +156,44 @@ async def create_company(
     return CompanyResponse.model_validate(company)
 
 
-@router.post("/{company_id}/invitations", response_model=InvitationResponse)
-async def invite_member(
-    company_id: str,
-    data: InvitationCreate,
+@router.get("/memberships", response_model=list[CompanyMembershipResponse])
+async def list_company_memberships(
     user: User = Depends(get_current_user),
-    company_id_dep: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    if str(company_id) != str(company_id_dep):
+    result = await db.execute(
+        select(CompanyMember, Company)
+        .join(Company, Company.id == CompanyMember.company_id)
+        .where(
+            CompanyMember.user_id == user.id,
+            CompanyMember.status == "active",
+        )
+        .order_by(Company.name, Company.id)
+    )
+    return [
+        CompanyMembershipResponse(
+            membership_id=membership.id,
+            company_id=company.id,
+            company_name=company.name,
+            role=membership.role,
+        )
+        for membership, company in result.all()
+    ]
+
+
+@router.post("/{company_id}/invitations", response_model=InvitationResponse)
+async def invite_member(
+    company_id: UUID,
+    data: InvitationCreate,
+    user: User = Depends(get_current_user),
+    actor: CompanyMember = Depends(get_current_company_membership),
+    db: AsyncSession = Depends(get_db),
+):
+    require_company_administrator(actor, company_id)
+    if data.role == UserRole.OWNER:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Not your company"
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Owner invitations are not supported",
         )
 
     existing = await db.execute(
@@ -186,7 +218,7 @@ async def invite_member(
         email=data.email,
         role=data.role.value,
         token_hash=token_hash,
-        invited_by=str(user.id),
+        invited_by=user.id,
         status="pending",
         expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7),
     )
@@ -195,7 +227,7 @@ async def invite_member(
 
     await create_audit_log(
         db=db,
-        company_id=company_id,
+        company_id=str(company_id),
         user_id=str(user.id),
         actor_type="user",
         action="invitation.created",
@@ -206,7 +238,7 @@ async def invite_member(
 
     return InvitationResponse(
         id=invitation.id,
-        company_id=UUID(company_id) if isinstance(company_id, str) else company_id,
+        company_id=company_id,
         email=invitation.email,
         role=data.role,
         status="pending",
@@ -216,28 +248,52 @@ async def invite_member(
 
 @router.patch("/{company_id}/members/{member_id}", response_model=MemberResponse)
 async def update_member(
-    company_id: str,
-    member_id: str,
+    company_id: UUID,
+    member_id: UUID,
     data: MemberUpdate,
     user: User = Depends(get_current_user),
-    company_id_dep: str = Depends(get_current_company_id),
+    actor: CompanyMember = Depends(get_current_company_membership),
     db: AsyncSession = Depends(get_db),
 ):
-    if str(company_id) != str(company_id_dep):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Not your company"
-        )
+    require_company_administrator(actor, company_id)
     result = await db.execute(
         select(CompanyMember).where(
-            CompanyMember.id == member_id, CompanyMember.company_id == company_id
+            CompanyMember.id == member_id,
+            CompanyMember.company_id == company_id,
         )
     )
     member = result.scalar_one_or_none()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
+
+    new_role = data.role.value if data.role is not None else None
+    new_status = data.status.value if data.status is not None else None
+    member = await authorize_member_update(
+        db,
+        actor=actor,
+        target=member,
+        new_role=new_role,
+        new_status=new_status,
+    )
+
+    before = {"role": member.role, "status": member.status}
     if data.role is not None:
-        member.role = data.role.value
+        member.role = new_role
     if data.status is not None:
-        member.status = data.status.value
+        member.status = new_status
     await db.flush()
+
+    after = {"role": member.role, "status": member.status}
+    if before != after:
+        await create_audit_log(
+            db=db,
+            company_id=str(company_id),
+            user_id=str(user.id),
+            actor_type="user",
+            action="membership.updated",
+            entity_type="company_member",
+            entity_id=str(member.id),
+            before_data=before,
+            after_data=after,
+        )
     return MemberResponse.model_validate(member)

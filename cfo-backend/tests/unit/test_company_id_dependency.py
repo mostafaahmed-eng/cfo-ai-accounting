@@ -38,13 +38,13 @@ def _make_membership(user_id, company_id, role="MEMBER", status="active"):
     )
 
 
-# --- Tests that exercise get_current_company_id directly ---
+# --- Tests that exercise company membership resolution directly ---
 
 
 @pytest.mark.asyncio
 async def test_single_membership_returns_that_company(db_session):
     """One active membership → returns that membership's company_id."""
-    from app.dependencies import get_current_company_id
+    from app.dependencies import resolve_company_membership
 
     user = _make_user("single@example.com")
     company = _make_company("Single Co")
@@ -53,14 +53,15 @@ async def test_single_membership_returns_that_company(db_session):
     db_session.add_all([user, company, membership])
     await db_session.flush()
 
-    result_company_id = await get_current_company_id(user=user, db=db_session)
-    assert result_company_id == company.id
+    resolved = await resolve_company_membership(user=user, db=db_session)
+    assert resolved.company_id == company.id
 
 
 @pytest.mark.asyncio
-async def test_multiple_memberships_prefers_owner(db_session):
-    """Two active memberships — one OWNER, one MEMBER → OWNER's company is returned."""
-    from app.dependencies import get_current_company_id
+async def test_multiple_memberships_require_explicit_selection(db_session):
+    """Multiple active memberships never trigger an implicit company choice."""
+    from app.dependencies import resolve_company_membership
+    from fastapi import HTTPException
 
     user = _make_user("owner@example.com")
     company_member = _make_company("Member Co")
@@ -72,14 +73,22 @@ async def test_multiple_memberships_prefers_owner(db_session):
     db_session.add_all([user, company_member, company_owner, mem1, mem2])
     await db_session.flush()
 
-    result_company_id = await get_current_company_id(user=user, db=db_session)
-    assert result_company_id == company_owner.id
+    with pytest.raises(HTTPException) as exc_info:
+        await resolve_company_membership(user=user, db=db_session)
+    assert exc_info.value.status_code == 409
+
+    resolved = await resolve_company_membership(
+        user=user,
+        db=db_session,
+        selected_company_id=str(company_owner.id),
+    )
+    assert resolved.company_id == company_owner.id
 
 
 @pytest.mark.asyncio
-async def test_multiple_memberships_no_owner_returns_first(db_session):
-    """Two active memberships, neither OWNER → returns the first one (deterministic via sort)."""
-    from app.dependencies import get_current_company_id
+async def test_unknown_explicit_membership_fails_safely(db_session):
+    from app.dependencies import resolve_company_membership
+    from fastapi import HTTPException
 
     user = _make_user("noowner@example.com")
     co_a = _make_company("Alpha Co")
@@ -91,15 +100,19 @@ async def test_multiple_memberships_no_owner_returns_first(db_session):
     db_session.add_all([user, co_a, co_b, mem_a, mem_b])
     await db_session.flush()
 
-    result_company_id = await get_current_company_id(user=user, db=db_session)
-    # Without OWNER, first active membership is returned
-    assert result_company_id in (co_a.id, co_b.id)
+    with pytest.raises(HTTPException) as exc_info:
+        await resolve_company_membership(
+            user=user,
+            db=db_session,
+            selected_company_id=str(uuid4()),
+        )
+    assert exc_info.value.status_code == 403
 
 
 @pytest.mark.asyncio
 async def test_no_memberships_raises_403(db_session):
     """User with zero active memberships → 403."""
-    from app.dependencies import get_current_company_id
+    from app.dependencies import resolve_company_membership
     from fastapi import HTTPException
 
     user = _make_user("lonely@example.com")
@@ -107,14 +120,14 @@ async def test_no_memberships_raises_403(db_session):
     await db_session.flush()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_company_id(user=user, db=db_session)
+        await resolve_company_membership(user=user, db=db_session)
     assert exc_info.value.status_code == 403
 
 
 @pytest.mark.asyncio
 async def test_only_inactive_memberships_raises_403(db_session):
     """User has memberships but all are disabled → 403."""
-    from app.dependencies import get_current_company_id
+    from app.dependencies import resolve_company_membership
     from fastapi import HTTPException
 
     user = _make_user("disabled@example.com")
@@ -125,7 +138,7 @@ async def test_only_inactive_memberships_raises_403(db_session):
     await db_session.flush()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_company_id(user=user, db=db_session)
+        await resolve_company_membership(user=user, db=db_session)
     assert exc_info.value.status_code == 403
 
 
