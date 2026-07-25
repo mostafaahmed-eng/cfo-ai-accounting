@@ -3,7 +3,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/contexts/AuthContext'
 import apiClient from '@/lib/api-client'
-import type { DashboardData, DraftTransaction } from '@/lib/types'
+import type {
+  CashFlowData,
+  DashboardData,
+  DraftTransaction,
+  ExpenseByCategoryData,
+} from '@/lib/types'
 import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import DashboardCards from '@/components/dashboard/DashboardCards'
@@ -14,17 +19,29 @@ import BudgetWarnings from '@/components/dashboard/BudgetWarnings'
 import AIReviewQueue from '@/components/dashboard/AIReviewQueue'
 import QuickCapture from '@/components/dashboard/QuickCapture'
 import ReceiptUpload from '@/components/dashboard/ReceiptUpload'
+import { DateRangePicker } from '@/components/reports/ReportDatePicker'
+import { useReportDateRange } from '@/hooks/useReportDates'
 
 export default function DashboardPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth()
+  const {
+    startDate,
+    endDate,
+    isValid,
+    setStartDate,
+    setEndDate,
+  } = useReportDateRange()
+  const reportParams = { start_date: startDate, end_date: endDate }
 
   const { data: dashboard, isLoading: dashLoading } = useQuery<DashboardData>({
-    queryKey: ['dashboard'],
+    queryKey: ['dashboard', startDate, endDate],
     queryFn: async () => {
-      const { data } = await apiClient.get('/reports/dashboard')
+      const { data } = await apiClient.get('/reports/dashboard', {
+        params: reportParams,
+      })
       return data
     },
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && isValid,
   })
 
   const { data: drafts } = useQuery<DraftTransaction[]>({
@@ -34,6 +51,28 @@ export default function DashboardPage() {
       return data
     },
     enabled: isAuthenticated,
+  })
+
+  const { data: cashFlow } = useQuery<CashFlowData>({
+    queryKey: ['report-cashflow', startDate, endDate],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/reports/cash-flow', {
+        params: reportParams,
+      })
+      return data
+    },
+    enabled: isAuthenticated && isValid,
+  })
+
+  const { data: expenseCategories } = useQuery<ExpenseByCategoryData>({
+    queryKey: ['report-expenses-by-category', startDate, endDate],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/reports/expenses-by-category', {
+        params: reportParams,
+      })
+      return data
+    },
+    enabled: isAuthenticated && isValid,
   })
 
   if (authLoading) {
@@ -48,7 +87,7 @@ export default function DashboardPage() {
     return null
   }
 
-  const reviewItems = (drafts || []).filter(d => d.status === 'ready_for_review' || d.status === 'needs_clarification')
+  const reviewItems = (drafts || []).filter(d => d.status === 'ready_for_review')
 
   return (
     <div className="flex min-h-screen">
@@ -57,6 +96,12 @@ export default function DashboardPage() {
         <Header />
         <main className="p-6">
           <h2 className="text-2xl font-bold mb-6">Dashboard</h2>
+          <DateRangePicker
+            startDate={startDate}
+            endDate={endDate}
+            onStartDateChange={setStartDate}
+            onEndDateChange={setEndDate}
+          />
           {dashLoading ? (
             <p className="text-gray-500">Loading...</p>
           ) : dashboard ? (
@@ -65,8 +110,8 @@ export default function DashboardPage() {
               <QuickCapture />
               <ReceiptUpload />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <CashFlowChart data={{ monthly_data: dashboard.recent_transactions }} />
-                <ExpenseCategoryChart categories={[]} />
+                <CashFlowChart data={{ monthly_data: cashFlow?.monthly_data || [] }} />
+                <ExpenseCategoryChart categories={expenseCategories?.categories || []} />
               </div>
               <BudgetWarnings warnings={dashboard.budget_warnings} />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -3,10 +3,12 @@
 import type { DashboardData } from '@/lib/types'
 
 export default function DashboardCards({ data }: { data: DashboardData }) {
+  const formatAmount = (amount: number) =>
+    `${data.base_currency} ${amount.toLocaleString()}`
   const cards = [
-    { label: 'Monthly Income', value: `$${data.monthly_income.toLocaleString()}`, color: 'text-green-600' },
-    { label: 'Monthly Expenses', value: `$${data.monthly_expenses.toLocaleString()}`, color: 'text-red-600' },
-    { label: 'Net Cash Flow', value: `$${data.net_cash_flow.toLocaleString()}`, color: data.net_cash_flow >= 0 ? 'text-green-600' : 'text-red-600' },
+    { label: 'Monthly Income', value: formatAmount(data.monthly_income), color: 'text-green-600' },
+    { label: 'Monthly Expenses', value: formatAmount(data.monthly_expenses), color: 'text-red-600' },
+    { label: 'Net Cash Flow', value: formatAmount(data.net_cash_flow), color: data.net_cash_flow >= 0 ? 'text-green-600' : 'text-red-600' },
     { label: 'Pending Approvals', value: data.pending_approvals.toString(), color: 'text-yellow-600' },
   ]
 

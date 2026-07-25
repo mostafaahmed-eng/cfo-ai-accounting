@@ -1,18 +1,26 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
+from app.dependencies import (
+    get_current_company_id,
+    get_current_company_membership,
+    get_current_user,
+)
+from app.models.company import CompanyMember
 from app.models.draft_transaction import DraftTransaction
+from app.models.inbox_item import InboxItem
 from app.models.user import User
 from app.schemas.draft_transaction import (
-    DraftTransactionUpdate,
-    DraftTransactionResponse,
     ClarificationRequest,
+    DraftTransactionResponse,
+    DraftTransactionUpdate,
 )
-from app.dependencies import get_current_user, get_current_company_id
-from app.services.journal import create_journal_entry_from_draft, JournalError
 from app.services.audit import create_audit_log
+from app.services.journal import JournalError, create_journal_entry_from_draft
 
 router = APIRouter()
 
@@ -93,8 +101,12 @@ async def approve_draft(
     draft_id: str,
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
+    membership: CompanyMember = Depends(get_current_company_membership),
     db: AsyncSession = Depends(get_db),
 ):
+    membership_role = getattr(membership.role, "value", membership.role)
+    if membership_role not in ("OWNER", "ADMIN", "APPROVER"):
+        raise HTTPException(status_code=403, detail="Approval role required")
     result = await db.execute(
         select(DraftTransaction).where(
             DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id
@@ -103,7 +115,7 @@ async def approve_draft(
     draft = result.scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    if draft.status not in ("ready_for_review", "needs_clarification"):
+    if draft.status != "ready_for_review":
         raise HTTPException(status_code=400, detail="Draft not ready for approval")
 
     draft.status = "approved"
@@ -114,9 +126,15 @@ async def approve_draft(
     try:
         await create_journal_entry_from_draft(db, draft)
         draft.status = "posted"
+        if draft.inbox_item_id:
+            inbox = await db.get(InboxItem, draft.inbox_item_id)
+            if inbox and inbox.company_id == draft.company_id:
+                inbox.status = "archived"
         await db.flush()
     except JournalError as e:
-        draft.status = "approved"
+        draft.status = "ready_for_review"
+        draft.approved_by = None
+        draft.approved_at = None
         await db.flush()
         raise HTTPException(status_code=400, detail=e.detail)
 
@@ -153,6 +171,10 @@ async def reject_draft(
         raise HTTPException(status_code=404, detail="Draft not found")
     old_status = draft.status
     draft.status = "rejected"
+    if draft.inbox_item_id:
+        inbox = await db.get(InboxItem, draft.inbox_item_id)
+        if inbox and inbox.company_id == draft.company_id:
+            inbox.status = "archived"
     await db.flush()
     await create_audit_log(
         db=db,

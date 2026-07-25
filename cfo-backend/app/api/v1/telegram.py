@@ -1,28 +1,41 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from uuid import UUID, uuid4
-from datetime import datetime, timezone
 import copy
 import secrets
-from app.database import get_db
+from uuid import UUID, uuid4
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import get_settings
-from app.models.telegram import TelegramConnection, TelegramUpdate
-from app.models.inbox_item import InboxItem
-from app.models.user import User
-from app.models.draft_transaction import DraftTransaction
-from app.schemas.telegram import TelegramStatusResponse
-from app.dependencies import get_current_user, get_current_company_id
-from app.tasks.ai_extraction import run_ai_extraction
-from app.tasks.telegram_responses import (
-    send_telegram_response,
-    send_telegram_edit,
-    answer_telegram_callback,
-)
-from app.services.audit import create_audit_log
-from app.services.telegram_pairing import consume_pairing
-from app.services.intake import create_text_inbox
+from app.core.telegram import TelegramFileError, telegram_client
 from app.core.text_processing import detect_language
+from app.database import get_db
+from app.dependencies import get_current_company_id, get_current_user
+from app.models.draft_transaction import DraftTransaction
+from app.models.inbox_item import InboxItem
+from app.models.telegram import TelegramConnection, TelegramUpdate
+from app.models.user import User
+from app.schemas.telegram import TelegramStatusResponse
+from app.services.audit import create_audit_log
+from app.services.document_intake import (
+    DocumentStorageError,
+    store_document_intake,
+)
+from app.services.document_processing import (
+    MIME_EXTENSIONS,
+    DocumentValidationError,
+    validate_content,
+)
+from app.services.intake import create_text_inbox, normalized_text_hash
+from app.services.telegram_pairing import consume_pairing
+from app.tasks.ai_extraction import run_ai_extraction
+from app.tasks.receipt_processing import process_receipt
+from app.tasks.telegram_responses import (
+    answer_telegram_callback,
+    send_telegram_edit,
+    send_telegram_response,
+)
 
 router = APIRouter()
 settings = get_settings()
@@ -69,6 +82,7 @@ async def telegram_webhook(
     if not update_id:
         raise HTTPException(status_code=400, detail="Missing update_id")
 
+    await db.execute(select(func.pg_advisory_xact_lock(update_id)))
     existing = await db.execute(
         select(TelegramUpdate).where(TelegramUpdate.telegram_update_id == update_id)
     )
@@ -77,7 +91,12 @@ async def telegram_webhook(
 
     callback_query = body.get("callback_query")
     if callback_query:
-        return await _handle_callback_query(callback_query, db)
+        return await _handle_callback_query(
+            callback_query,
+            db,
+            update_id=update_id,
+            payload=body,
+        )
 
     message = body.get("message", {})
     chat_id = message.get("chat", {}).get("id")
@@ -85,7 +104,10 @@ async def telegram_webhook(
         return {"status": "no_chat_id"}
 
     result = await db.execute(
-        select(TelegramConnection).where(TelegramConnection.telegram_chat_id == chat_id)
+        select(TelegramConnection).where(
+            TelegramConnection.telegram_chat_id == chat_id,
+            TelegramConnection.status == "active",
+        )
     )
     connection = result.scalar_one_or_none()
 
@@ -171,6 +193,49 @@ async def telegram_webhook(
         await db.flush()
         return {"status": "ok"}
 
+    if text:
+        correction_result = await db.execute(
+            select(DraftTransaction, InboxItem)
+            .join(InboxItem, InboxItem.id == DraftTransaction.inbox_item_id)
+            .join(TelegramUpdate, TelegramUpdate.inbox_item_id == InboxItem.id)
+            .where(
+                DraftTransaction.company_id == connection.company_id,
+                DraftTransaction.status == "needs_clarification",
+                InboxItem.source == "telegram",
+                TelegramUpdate.chat_id == chat_id,
+                TelegramUpdate.update_type == "callback",
+            )
+            .order_by(TelegramUpdate.created_at.desc())
+        )
+        correction = correction_result.first()
+        if correction:
+            draft, item = correction
+            item.original_text = text
+            item.detected_language = detect_language(text)
+            item.content_hash = normalized_text_hash(text)
+            item.status = "queued"
+            item.error_code = None
+            item.error_message = None
+            update = TelegramUpdate(
+                id=uuid4(),
+                connection_id=str(connection.id),
+                telegram_update_id=update_id,
+                message_id=message.get("message_id"),
+                chat_id=chat_id,
+                update_type="correction",
+                payload=body,
+                processing_status="dispatched",
+                inbox_item_id=str(item.id),
+            )
+            db.add(update)
+            await db.flush()
+            await db.commit()
+            send_telegram_response.delay(
+                chat_id, "Thanks — re-checking the corrected details now."
+            )
+            run_ai_extraction.delay(str(item.id))
+            return {"status": "correction_dispatched"}
+
     update = TelegramUpdate(
         id=uuid4(),
         connection_id=str(connection.id),
@@ -204,22 +269,104 @@ async def telegram_webhook(
         if creation.created:
             run_ai_extraction.delay(str(item.id))
     else:
-        content_types = ["photo", "document", "voice"]
-        for ct in content_types:
-            if message.get(ct):
+        photo = message.get("photo")
+        telegram_document = message.get("document")
+        attachment = None
+        if isinstance(photo, list) and photo:
+            largest = photo[-1]
+            attachment = {
+                "file_id": largest.get("file_id"),
+                "file_size": largest.get("file_size"),
+                "mime_type": "image/jpeg",
+                "filename": f"{largest.get('file_unique_id', 'telegram-photo')}.jpg",
+            }
+        elif isinstance(telegram_document, dict):
+            attachment = {
+                "file_id": telegram_document.get("file_id"),
+                "file_size": telegram_document.get("file_size"),
+                "mime_type": (telegram_document.get("mime_type") or "").lower(),
+                "filename": telegram_document.get("file_name") or "telegram-document",
+            }
+
+        if attachment and attachment["mime_type"] in MIME_EXTENSIONS:
+            try:
+                if (
+                    attachment["file_size"] is not None
+                    and int(attachment["file_size"]) > settings.MAX_UPLOAD_SIZE
+                ):
+                    raise DocumentValidationError(
+                        "file_too_large", "File exceeds upload limit"
+                    )
+                content = await telegram_client.download_file(attachment["file_id"])
+                validated = validate_content(content, attachment["mime_type"])
+                stored = await store_document_intake(
+                    db,
+                    company_id=connection.company_id,
+                    validated=validated,
+                    original_name=attachment["filename"],
+                    source="telegram",
+                    source_reference=str(update_id),
+                    submitted_by=None,
+                )
+            except DocumentValidationError as exc:
                 send_telegram_response.delay(
                     chat_id,
-                    f"Received a {ct}. Currently I only support text-based extraction. "
-                    "Please type the expense details (e.g., 'Paid $50 for office supplies to Acme Corp on 2025-01-15').",
+                    f"I couldn't accept that receipt: {exc.detail}. "
+                    "Please send a JPG, PNG, or PDF up to 10MB.",
                 )
                 update.processing_status = "unsupported_content"
-                break
+            except (TelegramFileError, httpx.HTTPError, DocumentStorageError):
+                send_telegram_response.delay(
+                    chat_id,
+                    "I couldn't download or store that receipt right now. "
+                    "Please try again shortly.",
+                )
+                update.processing_status = "attachment_failed"
+            else:
+                update.inbox_item_id = str(stored.item.id)
+                update.processing_status = "dispatched"
+                await db.commit()
+                send_telegram_response.delay(
+                    chat_id,
+                    "Processing your receipt... I'll extract the financial data shortly.",
+                )
+                if stored.dispatch_processing:
+                    process_receipt.delay(str(stored.item.id), str(stored.document.id))
+        else:
+            unsupported_type = next(
+                (
+                    content_type
+                    for content_type in (
+                        "document",
+                        "voice",
+                        "audio",
+                        "video",
+                        "video_note",
+                        "sticker",
+                        "animation",
+                    )
+                    if message.get(content_type)
+                ),
+                "content",
+            )
+            send_telegram_response.delay(
+                chat_id,
+                f"I can't process that {unsupported_type}. "
+                "Please send expense text, a JPG/PNG receipt photo, or a PDF up to 10MB.",
+            )
+            update.processing_status = "unsupported_content"
 
     await db.flush()
     return {"status": "ok"}
 
 
-async def _handle_callback_query(callback_query: dict, db: AsyncSession):
+async def _handle_callback_query(
+    callback_query: dict,
+    db: AsyncSession,
+    *,
+    update_id: int | None = None,
+    payload: dict | None = None,
+):
     cb_id = callback_query.get("id")
     data = callback_query.get("data", "")
     message = callback_query.get("message", {})
@@ -244,7 +391,22 @@ async def _handle_callback_query(callback_query: dict, db: AsyncSession):
 
     company_id = connection.company_id
 
-    if data.startswith("approve:"):
+    callback_update = None
+    if update_id is not None:
+        callback_update = TelegramUpdate(
+            id=uuid4(),
+            connection_id=str(connection.id),
+            telegram_update_id=update_id,
+            message_id=message_id,
+            chat_id=chat_id,
+            update_type="callback",
+            payload=payload or {"callback_query": callback_query},
+            processing_status="processed",
+        )
+        db.add(callback_update)
+        await db.flush()
+
+    if data.startswith("confirm:"):
         draft_id = data.split(":", 1)[1]
         result = await db.execute(
             select(DraftTransaction).where(
@@ -253,119 +415,91 @@ async def _handle_callback_query(callback_query: dict, db: AsyncSession):
             )
         )
         draft = result.scalar_one_or_none()
-        if draft and draft.status == "ready_for_review":
-            from app.services.journal import (
-                create_journal_entry_from_draft,
-                JournalError,
-            )
-
-            draft.status = "approved"
-            draft.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            await db.flush()
-            try:
-                await create_journal_entry_from_draft(db, draft)
-                draft.status = "posted"
-                await db.flush()
-                send_telegram_edit.delay(
-                    chat_id,
-                    message_id,
-                    f"Approved and posted!\nAmount: {draft.currency} {draft.amount}\n{draft.description}",
-                )
-                await create_audit_log(
-                    db=db,
-                    company_id=str(company_id),
-                    user_id=None,
-                    actor_type="telegram",
-                    action="draft.approved",
-                    entity_type="draft_transaction",
-                    entity_id=str(draft.id),
-                    before_data={"status": "ready_for_review"},
-                    after_data={
-                        "status": "posted",
-                        "currency": draft.currency,
-                        "amount": float(draft.amount),
-                    },
-                )
-                await _audit_callback(
-                    db,
-                    connection=connection,
-                    action="approve",
-                    target_type="draft_transaction",
-                    target_id=str(draft.id),
-                    status="succeeded",
-                )
-            except JournalError as e:
-                draft.status = "approved"
-                await db.flush()
-                send_telegram_response.delay(chat_id, f"Approval failed: {e.detail}")
-                await _audit_callback(
-                    db,
-                    connection=connection,
-                    action="approve",
-                    target_type="draft_transaction",
-                    target_id=str(draft.id),
-                    status="failed",
-                )
-        else:
-            send_telegram_response.delay(
-                chat_id, "Draft not found or already processed."
-            )
-            await _audit_callback(
-                db,
-                connection=connection,
-                action="approve",
-                target_type="draft_transaction",
-                target_id=draft_id,
-                status="denied",
-            )
-
-    elif data.startswith("reject:"):
-        draft_id = data.split(":", 1)[1]
-        result = await db.execute(
-            select(DraftTransaction).where(
-                DraftTransaction.id == draft_id,
-                DraftTransaction.company_id == company_id,
-            )
-        )
-        draft = result.scalar_one_or_none()
-        if draft:
-            old_status = draft.status
-            draft.status = "rejected"
+        if draft and draft.status == "needs_clarification":
+            if callback_update is not None:
+                callback_update.inbox_item_id = draft.inbox_item_id
+            draft.status = "ready_for_review"
             await db.flush()
             send_telegram_edit.delay(
                 chat_id,
                 message_id,
-                f"Rejected.\nAmount: {draft.currency} {draft.amount}\n{draft.description}",
-            )
-            await create_audit_log(
-                db=db,
-                company_id=str(company_id),
-                user_id=None,
-                actor_type="telegram",
-                action="draft.rejected",
-                entity_type="draft_transaction",
-                entity_id=str(draft.id),
-                before_data={"status": old_status},
-                after_data={"status": "rejected"},
+                "Thanks! This has been sent for review. ✅",
             )
             await _audit_callback(
                 db,
                 connection=connection,
-                action="reject",
+                action="confirm",
                 target_type="draft_transaction",
                 target_id=str(draft.id),
                 status="succeeded",
             )
         else:
-            send_telegram_response.delay(chat_id, "Draft not found.")
+            send_telegram_response.delay(
+                chat_id, "This confirmation is no longer available."
+            )
             await _audit_callback(
                 db,
                 connection=connection,
-                action="reject",
+                action="confirm",
                 target_type="draft_transaction",
                 target_id=draft_id,
                 status="denied",
             )
+
+    elif data.startswith("correct:"):
+        draft_id = data.split(":", 1)[1]
+        result = await db.execute(
+            select(DraftTransaction).where(
+                DraftTransaction.id == draft_id,
+                DraftTransaction.company_id == company_id,
+            )
+        )
+        draft = result.scalar_one_or_none()
+        if draft and draft.status in ("needs_clarification", "ready_for_review"):
+            if callback_update is not None:
+                callback_update.inbox_item_id = draft.inbox_item_id
+            draft.status = "needs_clarification"
+            await db.flush()
+            send_telegram_edit.delay(
+                chat_id,
+                message_id,
+                "No problem — just send me the corrected details as a message.",
+            )
+            await _audit_callback(
+                db,
+                connection=connection,
+                action="correct",
+                target_type="draft_transaction",
+                target_id=str(draft.id),
+                status="succeeded",
+            )
+        else:
+            send_telegram_response.delay(
+                chat_id, "This correction request is no longer available."
+            )
+            await _audit_callback(
+                db,
+                connection=connection,
+                action="correct",
+                target_type="draft_transaction",
+                target_id=draft_id,
+                status="denied",
+            )
+
+    elif data.startswith(("approve:", "reject:")):
+        action, draft_id = data.split(":", 1)
+        send_telegram_response.delay(
+            chat_id,
+            "Accounting approval is only available in the dashboard.",
+        )
+        await _audit_callback(
+            db,
+            connection=connection,
+            action=action,
+            target_type="draft_transaction",
+            target_id=draft_id,
+            status="denied",
+        )
 
     elif data.startswith("edit:"):
         draft_id = data.split(":", 1)[1]

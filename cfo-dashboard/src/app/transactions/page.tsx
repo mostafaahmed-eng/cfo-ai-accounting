@@ -26,21 +26,13 @@ export default function TransactionsPage() {
     },
   })
 
-  const approveMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiClient.post(`/draft-transactions/${id}/approve`)
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['draft-transactions'] })
-    },
-  })
-
   const rejectMutation = useMutation({
     mutationFn: async (id: string) => {
       await apiClient.post(`/draft-transactions/${id}/reject`)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['draft-transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['inbox'] })
     },
   })
 
@@ -89,14 +81,11 @@ export default function TransactionsPage() {
                         {tx.ai_confidence != null ? `${(tx.ai_confidence * 100).toFixed(0)}%` : '-'}
                       </td>
                       <td className="p-4 text-sm">
-                        {(tx.status === 'ready_for_review' || tx.status === 'needs_clarification') && (
+                        {tx.status === 'ready_for_review' && (
                           <div className="flex gap-2">
-                            <button
-                              onClick={() => approveMutation.mutate(tx.id)}
-                              className="text-green-600 hover:underline text-xs"
-                            >
-                              Approve
-                            </button>
+                            <Link href={`/transactions/${tx.id}`} className="text-green-600 hover:underline text-xs">
+                              Review
+                            </Link>
                             <button
                               onClick={() => rejectMutation.mutate(tx.id)}
                               className="text-red-600 hover:underline text-xs"
@@ -104,6 +93,9 @@ export default function TransactionsPage() {
                               Reject
                             </button>
                           </div>
+                        )}
+                        {tx.status === 'needs_clarification' && (
+                          <span className="text-xs text-amber-700">Waiting on submitter</span>
                         )}
                       </td>
                     </tr>

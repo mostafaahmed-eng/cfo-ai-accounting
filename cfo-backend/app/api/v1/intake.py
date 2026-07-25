@@ -31,6 +31,8 @@ async def list_inbox_items(
     )
     if status:
         query = query.where(InboxItem.status == status)
+    else:
+        query = query.where(InboxItem.status != "archived")
     result = await db.execute(query)
     return [InboxItemResponse.model_validate(i) for i in result.scalars().all()]
 

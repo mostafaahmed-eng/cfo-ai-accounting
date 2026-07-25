@@ -2,6 +2,7 @@ from pydantic import BaseModel
 
 
 class DashboardResponse(BaseModel):
+    base_currency: str
     monthly_income: float
     monthly_expenses: float
     net_cash_flow: float
@@ -11,6 +12,7 @@ class DashboardResponse(BaseModel):
 
 
 class PnLResponse(BaseModel):
+    base_currency: str
     period: str
     revenue: list[dict] = []
     expenses: list[dict] = []
@@ -18,6 +20,7 @@ class PnLResponse(BaseModel):
 
 
 class CashFlowResponse(BaseModel):
+    base_currency: str
     period: str
     operating: float
     investing: float
@@ -27,6 +30,7 @@ class CashFlowResponse(BaseModel):
 
 
 class BalanceSheetResponse(BaseModel):
+    base_currency: str
     as_of: str
     assets: list[dict] = []
     liabilities: list[dict] = []
@@ -37,6 +41,7 @@ class BalanceSheetResponse(BaseModel):
 
 
 class ExpenseByCategoryResponse(BaseModel):
+    base_currency: str
     period: str
     categories: list[dict] = []
     total: float

@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from uuid import uuid4
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
+from app.dependencies import get_current_company_id, get_current_user
+from app.models.company import Company
 from app.models.exchange_rate import ExchangeRate
 from app.models.user import User
 from app.schemas.exchange_rate import ExchangeRateCreate, ExchangeRateResponse
-from app.dependencies import get_current_user, get_current_company_id
 
 router = APIRouter()
 
@@ -32,6 +35,14 @@ async def create_rate(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
+    company = await db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if data.base_currency != company.base_currency.upper():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Base currency must match company base currency {company.base_currency}",
+        )
     rate = ExchangeRate(
         id=uuid4(),
         company_id=company_id,

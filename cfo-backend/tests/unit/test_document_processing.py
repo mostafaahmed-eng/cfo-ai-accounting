@@ -7,6 +7,7 @@ from pypdf import PdfWriter
 
 from app.services.document_processing import (
     DocumentValidationError,
+    _parse_provider_json,
     validate_upload,
 )
 
@@ -91,3 +92,13 @@ async def test_oversized_upload_is_bounded(monkeypatch):
             _upload(b"\x89PNG\r\n\x1a\nextra", "image/png", "large.png")
         )
     assert exc_info.value.code == "file_too_large"
+
+
+def test_parse_provider_json_accepts_plain_json():
+    assert _parse_provider_json('{"text": "Total 20.00"}') == {"text": "Total 20.00"}
+
+
+def test_parse_provider_json_accepts_markdown_fenced_json():
+    assert _parse_provider_json('```json\n{"text": "Total 20.00"}\n```') == {
+        "text": "Total 20.00"
+    }

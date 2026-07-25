@@ -1,17 +1,19 @@
-from pathlib import Path
-
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select
-from uuid import uuid4
 from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.storage import storage_client
 from app.database import get_db
+from app.dependencies import get_current_company_id, get_current_user
 from app.models.document import Document
-from app.models.inbox_item import InboxItem
 from app.models.user import User
 from app.schemas.document import DocumentResponse, DownloadURLResponse
-from app.dependencies import get_current_user, get_current_company_id
-from app.core.storage import storage_client
+from app.services.document_intake import (
+    DocumentStorageError,
+    store_document_intake,
+)
 from app.services.document_processing import (
     DocumentValidationError,
     validate_upload,
@@ -42,100 +44,25 @@ async def upload_document(
             status_code = 422
         raise HTTPException(status_code=status_code, detail=exc.detail)
 
-    advisory_key = int(validated.sha256_hash[:15], 16)
-    await db.execute(select(func.pg_advisory_xact_lock(advisory_key)))
-    existing = await db.execute(
-        select(Document).where(
-            Document.company_id == company_id,
-            Document.sha256_hash == validated.sha256_hash,
-        )
-    )
-    existing_doc = existing.scalars().first()
-    if existing_doc:
-        if existing_doc.upload_status == "failed":
-            linked = await db.execute(
-                select(InboxItem).where(
-                    InboxItem.id == existing_doc.inbox_item_id,
-                    InboxItem.company_id == company_id,
-                )
-            )
-            existing_item = linked.scalar_one()
-            try:
-                await storage_client.upload_file(
-                    existing_doc.storage_key,
-                    validated.content,
-                    validated.mime_type,
-                )
-            except Exception:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Document storage is temporarily unavailable",
-                )
-            existing_doc.upload_status = "stored"
-            existing_item.status = "queued"
-            existing_item.error_code = None
-            existing_item.error_message = None
-            await db.commit()
-            process_receipt.delay(str(existing_item.id), str(existing_doc.id))
-        return DocumentResponse.model_validate(existing_doc)
-
-    item_id = uuid4()
-    document_id = uuid4()
-    storage_key = (
-        f"companies/{company_id}/documents/{document_id}.{validated.extension}"
-    )
-    original_name = Path(file.filename or f"upload.{validated.extension}").name[:255]
-
-    doc = Document(
-        id=document_id,
-        company_id=company_id,
-        inbox_item_id=item_id,
-        storage_key=storage_key,
-        original_name=original_name,
-        mime_type=validated.mime_type,
-        size_bytes=len(validated.content),
-        sha256_hash=validated.sha256_hash,
-        document_type="receipt",
-        upload_status="pending",
-        uploaded_by=str(user.id),
-    )
-    item = InboxItem(
-        id=item_id,
-        company_id=company_id,
-        source="web_receipt",
-        source_reference=str(document_id),
-        content_type=(
-            "document" if validated.mime_type == "application/pdf" else "image"
-        ),
-        status="received",
-        submitted_by=user.id,
-        content_hash=validated.sha256_hash,
-        duplicate_status="unique",
-    )
-    db.add_all([item, doc])
-    await db.flush()
-    await db.commit()
-
     try:
-        await storage_client.upload_file(
-            storage_key, validated.content, validated.mime_type
+        stored = await store_document_intake(
+            db,
+            company_id=company_id,
+            validated=validated,
+            original_name=file.filename or f"upload.{validated.extension}",
+            source="web_receipt",
+            source_reference=None,
+            submitted_by=user.id,
         )
-    except Exception:
-        doc.upload_status = "failed"
-        item.status = "failed"
-        item.error_code = "storage_failed"
-        item.error_message = "The document could not be stored"
-        await db.commit()
+    except DocumentStorageError:
         raise HTTPException(
             status_code=503,
             detail="Document storage is temporarily unavailable",
         )
 
-    doc.upload_status = "stored"
-    item.status = "queued"
-    await db.commit()
-    process_receipt.delay(str(item.id), str(doc.id))
-    return DocumentResponse.model_validate(doc)
+    if stored.dispatch_processing:
+        process_receipt.delay(str(stored.item.id), str(stored.document.id))
+    return DocumentResponse.model_validate(stored.document)
 
 
 @router.get("/{doc_id}", response_model=DocumentResponse)

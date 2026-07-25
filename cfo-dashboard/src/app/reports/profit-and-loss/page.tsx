@@ -5,14 +5,26 @@ import Header from '@/components/layout/Header'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
 import type { PnLData } from '@/lib/types'
+import { DateRangePicker } from '@/components/reports/ReportDatePicker'
+import { useReportDateRange } from '@/hooks/useReportDates'
 
 export default function PnLPage() {
+  const {
+    startDate,
+    endDate,
+    isValid,
+    setStartDate,
+    setEndDate,
+  } = useReportDateRange()
   const { data: pnl, isLoading } = useQuery<PnLData>({
-    queryKey: ['report-pnl'],
+    queryKey: ['report-pnl', startDate, endDate],
     queryFn: async () => {
-      const { data } = await apiClient.get('/reports/profit-and-loss')
+      const { data } = await apiClient.get('/reports/profit-and-loss', {
+        params: { start_date: startDate, end_date: endDate },
+      })
       return data
     },
+    enabled: isValid,
   })
 
   return (
@@ -22,6 +34,12 @@ export default function PnLPage() {
         <Header />
         <main className="p-6">
           <h2 className="text-2xl font-bold mb-6">Profit &amp; Loss</h2>
+          <DateRangePicker
+            startDate={startDate}
+            endDate={endDate}
+            onStartDateChange={setStartDate}
+            onEndDateChange={setEndDate}
+          />
           {isLoading ? (
             <p className="text-gray-500">Loading...</p>
           ) : pnl ? (
@@ -36,7 +54,7 @@ export default function PnLPage() {
                     pnl.revenue.map((item, i) => (
                       <div key={i} className="flex justify-between text-sm py-1 border-b">
                         <span>{String(item.account)}</span>
-                        <span>${Number(item.amount).toLocaleString()}</span>
+                        <span>{pnl.base_currency} {Number(item.amount).toLocaleString()}</span>
                       </div>
                     ))
                   )}
@@ -49,7 +67,7 @@ export default function PnLPage() {
                     pnl.expenses.map((item, i) => (
                       <div key={i} className="flex justify-between text-sm py-1 border-b">
                         <span>{String(item.account)}</span>
-                        <span>${Number(item.amount).toLocaleString()}</span>
+                        <span>{pnl.base_currency} {Number(item.amount).toLocaleString()}</span>
                       </div>
                     ))
                   )}
@@ -57,7 +75,7 @@ export default function PnLPage() {
                 <div className="flex justify-between font-bold text-lg border-t pt-4">
                   <span>Net Income</span>
                   <span className={pnl.net_income >= 0 ? 'text-green-700' : 'text-red-700'}>
-                    ${pnl.net_income.toLocaleString()}
+                    {pnl.base_currency} {pnl.net_income.toLocaleString()}
                   </span>
                 </div>
               </div>

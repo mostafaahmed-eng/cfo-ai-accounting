@@ -5,12 +5,16 @@ import Header from '@/components/layout/Header'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
 import type { InboxItem } from '@/lib/types'
+import { useState } from 'react'
 
 export default function InboxPage() {
+  const [view, setView] = useState<'active' | 'archived'>('active')
   const { data: items, isLoading } = useQuery<InboxItem[]>({
-    queryKey: ['inbox'],
+    queryKey: ['inbox', view],
     queryFn: async () => {
-      const { data } = await apiClient.get('/intake')
+      const { data } = await apiClient.get(
+        view === 'archived' ? '/intake?status=archived' : '/intake',
+      )
       return data
     },
     refetchInterval: (query) =>
@@ -25,7 +29,23 @@ export default function InboxPage() {
       <div className="flex-1">
         <Header />
         <main className="p-6">
-          <h2 className="text-2xl font-bold mb-6">Inbox</h2>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold">Inbox</h2>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setView('active')}
+                className={`px-3 py-2 rounded text-sm ${view === 'active' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}
+              >
+                Active
+              </button>
+              <button
+                onClick={() => setView('archived')}
+                className={`px-3 py-2 rounded text-sm ${view === 'archived' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}
+              >
+                Archived
+              </button>
+            </div>
+          </div>
           {isLoading ? (
             <p className="text-gray-500">Loading...</p>
           ) : (

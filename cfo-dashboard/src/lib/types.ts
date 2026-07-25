@@ -201,6 +201,7 @@ export interface ExchangeRate {
 }
 
 export interface DashboardData {
+  base_currency: string
   monthly_income: number
   monthly_expenses: number
   net_cash_flow: number
@@ -210,6 +211,7 @@ export interface DashboardData {
 }
 
 export interface PnLData {
+  base_currency: string
   period: string
   revenue: Record<string, unknown>[]
   expenses: Record<string, unknown>[]
@@ -217,6 +219,7 @@ export interface PnLData {
 }
 
 export interface CashFlowData {
+  base_currency: string
   period: string
   operating: number
   investing: number
@@ -226,6 +229,7 @@ export interface CashFlowData {
 }
 
 export interface BalanceSheetData {
+  base_currency: string
   as_of: string
   assets: Record<string, unknown>[]
   liabilities: Record<string, unknown>[]
@@ -236,6 +240,7 @@ export interface BalanceSheetData {
 }
 
 export interface ExpenseByCategoryData {
+  base_currency: string
   period: string
   categories: Record<string, unknown>[]
   total: number

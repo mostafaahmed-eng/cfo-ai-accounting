@@ -1,4 +1,6 @@
 import boto3
+from botocore.config import Config
+
 from app.config import get_settings
 
 settings = get_settings()
@@ -7,19 +9,32 @@ settings = get_settings()
 class StorageClient:
     def __init__(self):
         self._s3 = None
+        self._public_s3 = None
         self.bucket = settings.S3_BUCKET_NAME
+
+    def _client(self, endpoint_url: str | None):
+        return boto3.client(
+            "s3",
+            endpoint_url=endpoint_url or None,
+            aws_access_key_id=settings.S3_ACCESS_KEY_ID or None,
+            aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY or None,
+            region_name=settings.S3_REGION,
+            config=Config(s3={"addressing_style": "path"}),
+        )
 
     @property
     def s3(self):
         if self._s3 is None:
-            self._s3 = boto3.client(
-                "s3",
-                endpoint_url=settings.S3_ENDPOINT_URL or None,
-                aws_access_key_id=settings.S3_ACCESS_KEY_ID or None,
-                aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY or None,
-                region_name=settings.S3_REGION,
-            )
+            self._s3 = self._client(settings.S3_ENDPOINT_URL)
         return self._s3
+
+    @property
+    def public_s3(self):
+        if self._public_s3 is None:
+            self._public_s3 = self._client(
+                settings.S3_PUBLIC_ENDPOINT_URL or settings.S3_ENDPOINT_URL
+            )
+        return self._public_s3
 
     async def upload_file(self, key: str, data: bytes, content_type: str):
         self.s3.put_object(
@@ -27,7 +42,7 @@ class StorageClient:
         )
 
     async def get_signed_url(self, key: str, expires_in: int = 3600) -> str:
-        return self.s3.generate_presigned_url(
+        return self.public_s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": self.bucket, "Key": key},
             ExpiresIn=expires_in,

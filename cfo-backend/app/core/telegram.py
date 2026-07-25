@@ -1,11 +1,18 @@
-import httpx
 import logging
+
+import httpx
+
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 TELEGRAM_API_BASE = "https://api.telegram.org/bot"
+TELEGRAM_FILE_BASE = "https://api.telegram.org/file/bot"
+
+
+class TelegramFileError(RuntimeError):
+    pass
 
 
 class TelegramClient:
@@ -52,6 +59,24 @@ class TelegramClient:
         if text:
             payload["text"] = text
         return await self._request("answerCallbackQuery", payload)
+
+    async def download_file(self, file_id: str) -> bytes:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            metadata_response = await client.post(
+                f"{self._base_url}/getFile",
+                json={"file_id": file_id},
+            )
+            metadata_response.raise_for_status()
+            metadata = metadata_response.json()
+            file_path = metadata.get("result", {}).get("file_path")
+            if not metadata.get("ok") or not file_path:
+                raise TelegramFileError("Telegram did not return a downloadable file")
+
+            file_response = await client.get(
+                f"{TELEGRAM_FILE_BASE}{self._token}/{file_path}"
+            )
+            file_response.raise_for_status()
+            return file_response.content
 
     async def _request(self, method: str, payload: dict) -> dict:
         async with httpx.AsyncClient(timeout=30.0) as client:

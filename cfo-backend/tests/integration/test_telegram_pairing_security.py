@@ -1,14 +1,17 @@
+import io
 import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+from PIL import Image
 from sqlalchemy import select
 
 from app.api.v1 import telegram as telegram_api
-from app.models.audit_log import AuditLog
 from app.enums import UserStatus
+from app.models.audit_log import AuditLog
 from app.models.company import Company, CompanyMember
+from app.models.document import Document
 from app.models.inbox_item import InboxItem
 from app.models.telegram import TelegramConnection, TelegramPairing, TelegramUpdate
 from app.models.user import User
@@ -54,6 +57,12 @@ def _start_update(update_id: int, chat_id: int, code: str | None):
             "text": text,
         },
     }
+
+
+def _jpeg() -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (4, 4), color="white").save(output, format="JPEG")
+    return output.getvalue()
 
 
 async def _request_pairing(client, db_session, company_id, headers):
@@ -117,6 +126,228 @@ async def test_successful_pairing_records_numeric_chat_id(
     )
     stored_update = update_result.scalar_one()
     assert stored_update.payload["message"]["text"] == "/start [REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_telegram_photo_uses_shared_document_intake(
+    client, db_session, _setup_company_and_user, monkeypatch
+):
+    company_id, user_id, _ = _setup_company_and_user
+    connection = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="testbot",
+        telegram_chat_id=987654324,
+        connected_by=user_id,
+        status="active",
+    )
+    db_session.add(connection)
+    await db_session.flush()
+
+    uploaded = []
+    dispatched = []
+    responses = []
+
+    async def fake_download(file_id):
+        assert file_id == "largest-photo"
+        return _jpeg()
+
+    async def fake_upload(key, content, mime_type):
+        uploaded.append((key, content, mime_type))
+
+    monkeypatch.setattr(telegram_api.telegram_client, "download_file", fake_download)
+    monkeypatch.setattr(
+        "app.services.document_intake.storage_client.upload_file", fake_upload
+    )
+    monkeypatch.setattr(
+        telegram_api.process_receipt,
+        "delay",
+        lambda inbox_id, document_id: dispatched.append((inbox_id, document_id)),
+    )
+    monkeypatch.setattr(
+        telegram_api.send_telegram_response,
+        "delay",
+        lambda *args: responses.append(args),
+    )
+
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json={
+            "update_id": 20015,
+            "message": {
+                "message_id": 20015,
+                "chat": {"id": 987654324},
+                "photo": [
+                    {
+                        "file_id": "small-photo",
+                        "file_unique_id": "small",
+                        "file_size": 100,
+                    },
+                    {
+                        "file_id": "largest-photo",
+                        "file_unique_id": "largest",
+                        "file_size": len(_jpeg()),
+                    },
+                ],
+            },
+        },
+        headers=_webhook_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    document = (
+        (
+            await db_session.execute(
+                select(Document).where(Document.company_id == company_id)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    item = (
+        await db_session.execute(
+            select(InboxItem).where(InboxItem.id == document.inbox_item_id)
+        )
+    ).scalar_one()
+    update = (
+        await db_session.execute(
+            select(TelegramUpdate).where(TelegramUpdate.telegram_update_id == 20015)
+        )
+    ).scalar_one()
+    assert document.mime_type == "image/jpeg"
+    assert document.upload_status == "stored"
+    assert document.size_bytes == len(_jpeg())
+    assert item.source == "telegram"
+    assert item.content_type == "image"
+    assert item.status == "queued"
+    assert update.inbox_item_id == item.id
+    assert uploaded[0][2] == "image/jpeg"
+    assert dispatched == [(str(item.id), str(document.id))]
+    assert "Processing your receipt" in responses[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_telegram_unsupported_content_gets_clear_response(
+    client, db_session, _setup_company_and_user, monkeypatch
+):
+    company_id, user_id, _ = _setup_company_and_user
+    connection = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="testbot",
+        telegram_chat_id=987654325,
+        connected_by=user_id,
+        status="active",
+    )
+    db_session.add(connection)
+    await db_session.flush()
+    responses = []
+    monkeypatch.setattr(
+        telegram_api.send_telegram_response,
+        "delay",
+        lambda *args: responses.append(args),
+    )
+
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json={
+            "update_id": 20016,
+            "message": {
+                "message_id": 20016,
+                "chat": {"id": 987654325},
+                "voice": {"file_id": "voice-file"},
+            },
+        },
+        headers=_webhook_headers(),
+    )
+
+    assert response.status_code == 200
+    update = (
+        await db_session.execute(
+            select(TelegramUpdate).where(TelegramUpdate.telegram_update_id == 20016)
+        )
+    ).scalar_one()
+    assert update.processing_status == "unsupported_content"
+    assert "can't process that voice" in responses[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_disconnect_reconnect_pairing_is_repeatable(
+    client, db_session, _setup_company_and_user
+):
+    company_id, _, headers = _setup_company_and_user
+    connection_id = None
+    chat_id = 987654322
+
+    for cycle, update_id in enumerate((20011, 20012), start=1):
+        pairing = await _request_pairing(client, db_session, company_id, headers)
+        response = await client.post(
+            "/api/v1/telegram/webhook",
+            json=_start_update(update_id, chat_id, pairing["pairing_code"]),
+            headers=_webhook_headers(),
+        )
+        assert response.status_code == 200
+        assert response.json() == {"status": "connected"}
+
+        result = await db_session.execute(
+            select(TelegramConnection).where(
+                TelegramConnection.company_id == company_id
+            )
+        )
+        connection = result.scalar_one()
+        if cycle == 1:
+            connection_id = connection.id
+        else:
+            assert connection.id == connection_id
+        assert connection.status == "active"
+        assert connection.telegram_chat_id == chat_id
+
+        disconnected = await client.delete(
+            "/api/v1/integrations/telegram/disconnect", headers=headers
+        )
+        assert disconnected.status_code == 200
+        assert connection.status == "disabled"
+        assert connection.telegram_chat_id is None
+
+
+@pytest.mark.asyncio
+async def test_reconnect_clears_legacy_disabled_chat_binding(
+    client, db_session, _setup_company_and_user
+):
+    company_id, user_id, headers = _setup_company_and_user
+    chat_id = 987654323
+    legacy = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="test_bot",
+        telegram_chat_id=chat_id,
+        connected_by=user_id,
+        status="disabled",
+    )
+    pending = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="test_bot",
+        telegram_chat_id=None,
+        connected_by=user_id,
+        status="pending_chat_id",
+    )
+    db_session.add_all([legacy, pending])
+    await db_session.flush()
+
+    pairing = await _request_pairing(client, db_session, company_id, headers)
+    assert legacy.telegram_chat_id is None
+
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json=_start_update(20013, chat_id, pairing["pairing_code"]),
+        headers=_webhook_headers(),
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "connected"}
+    assert pending.status == "active"
+    assert pending.telegram_chat_id == chat_id
 
 
 @pytest.mark.asyncio
@@ -402,7 +633,7 @@ async def test_cross_company_extract_callback_is_denied(
 
 
 @pytest.mark.asyncio
-async def test_valid_approval_callback_remains_scoped_and_audited(
+async def test_legacy_approval_callback_is_denied_and_audited(
     db_session, _setup_company_and_user
 ):
     from app.models.account import Account
@@ -459,16 +690,16 @@ async def test_valid_approval_callback_remains_scoped_and_audited(
         db_session,
     )
     assert result == {"status": "ok"}
-    assert draft.status == "posted"
+    assert draft.status == "ready_for_review"
 
     audit_result = await db_session.execute(
         select(AuditLog).where(AuditLog.action == "telegram.callback_approve")
     )
-    assert audit_result.scalar_one().after_data["status"] == "succeeded"
+    assert audit_result.scalar_one().after_data["status"] == "denied"
 
 
 @pytest.mark.asyncio
-async def test_valid_reject_callback_remains_scoped_and_audited(
+async def test_legacy_reject_callback_is_denied_and_audited(
     db_session, _setup_company_and_user
 ):
     from app.models.draft_transaction import DraftTransaction
@@ -504,12 +735,183 @@ async def test_valid_reject_callback_remains_scoped_and_audited(
         db_session,
     )
     assert result == {"status": "ok"}
-    assert draft.status == "rejected"
+    assert draft.status == "ready_for_review"
 
     audit_result = await db_session.execute(
         select(AuditLog).where(AuditLog.action == "telegram.callback_reject")
     )
-    assert audit_result.scalar_one().after_data["status"] == "succeeded"
+    assert audit_result.scalar_one().after_data["status"] == "denied"
+
+
+@pytest.mark.asyncio
+async def test_confirm_callback_marks_ready_without_posting_and_deduplicates(
+    client, db_session, _setup_company_and_user
+):
+    from app.models.draft_transaction import DraftTransaction
+    from app.models.journal import JournalEntry
+
+    company_id, user_id, _ = _setup_company_and_user
+    connection = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="testbot",
+        telegram_chat_id=915001,
+        connected_by=user_id,
+        status="active",
+    )
+    draft = DraftTransaction(
+        id=uuid4(),
+        company_id=company_id,
+        type="expense",
+        amount=10,
+        currency="USD",
+        transaction_date=datetime.now(timezone.utc).date(),
+        description="Confirm me",
+        status="needs_clarification",
+    )
+    db_session.add_all([connection, draft])
+    await db_session.flush()
+    payload = {
+        "update_id": 30001,
+        "callback_query": {
+            "id": "confirm-valid",
+            "data": f"confirm:{draft.id}",
+            "message": {"chat": {"id": 915001}, "message_id": 3},
+        },
+    }
+
+    first = await client.post(
+        "/api/v1/telegram/webhook",
+        json=payload,
+        headers=_webhook_headers(),
+    )
+    replay = await client.post(
+        "/api/v1/telegram/webhook",
+        json=payload,
+        headers=_webhook_headers(),
+    )
+
+    assert first.status_code == 200
+    assert first.json() == {"status": "ok"}
+    assert replay.json() == {"status": "duplicate"}
+    assert draft.status == "ready_for_review"
+    entries = (await db_session.execute(select(JournalEntry))).scalars().all()
+    assert entries == []
+    updates = (
+        (
+            await db_session.execute(
+                select(TelegramUpdate).where(
+                    TelegramUpdate.telegram_update_id == payload["update_id"]
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_correction_reuses_inbox_item_and_dispatches_extraction(
+    client, db_session, _setup_company_and_user, monkeypatch
+):
+    from app.models.draft_transaction import DraftTransaction
+
+    company_id, user_id, _ = _setup_company_and_user
+    connection = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="testbot",
+        telegram_chat_id=920001,
+        connected_by=user_id,
+        status="active",
+    )
+    item = InboxItem(
+        id=uuid4(),
+        company_id=company_id,
+        source="telegram",
+        content_type="text",
+        original_text="Wrong details",
+        detected_language="en",
+        status="review_required",
+        content_hash="a" * 64,
+        duplicate_status="unique",
+    )
+    draft = DraftTransaction(
+        id=uuid4(),
+        company_id=company_id,
+        inbox_item_id=item.id,
+        type="expense",
+        amount=10,
+        currency="USD",
+        transaction_date=datetime.now(timezone.utc).date(),
+        description="Needs correction",
+        status="ready_for_review",
+    )
+    original_update = TelegramUpdate(
+        id=uuid4(),
+        connection_id=connection.id,
+        telegram_update_id=30002,
+        message_id=4,
+        chat_id=920001,
+        update_type="message",
+        payload={"update_id": 30002},
+        processing_status="processed",
+        inbox_item_id=item.id,
+    )
+    db_session.add_all([connection, item, draft, original_update])
+    await db_session.flush()
+    dispatched = []
+    monkeypatch.setattr(
+        telegram_api.run_ai_extraction,
+        "delay",
+        lambda inbox_id: dispatched.append(inbox_id),
+    )
+
+    correction_request = await client.post(
+        "/api/v1/telegram/webhook",
+        json={
+            "update_id": 30004,
+            "callback_query": {
+                "id": "correct-valid",
+                "data": f"correct:{draft.id}",
+                "message": {"chat": {"id": 920001}, "message_id": 4},
+            },
+        },
+        headers=_webhook_headers(),
+    )
+    assert correction_request.status_code == 200
+    assert draft.status == "needs_clarification"
+
+    response = await client.post(
+        "/api/v1/telegram/webhook",
+        json={
+            "update_id": 30003,
+            "message": {
+                "message_id": 5,
+                "chat": {"id": 920001},
+                "text": "Paid USD 12 for corrected coffee",
+            },
+        },
+        headers=_webhook_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "correction_dispatched"}
+    assert item.original_text == "Paid USD 12 for corrected coffee"
+    assert item.status == "queued"
+    assert draft.status == "needs_clarification"
+    assert dispatched == [str(item.id)]
+    items = (
+        (
+            await db_session.execute(
+                select(InboxItem).where(InboxItem.company_id == company_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert items == [item]
 
 
 @pytest.mark.asyncio

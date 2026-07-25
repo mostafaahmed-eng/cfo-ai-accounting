@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
+import axios from 'axios'
 import apiClient from '@/lib/api-client'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Document } from '@/lib/types'
@@ -24,7 +25,10 @@ export default function ReceiptUpload() {
       setError('')
       queryClient.invalidateQueries({ queryKey: ['inbox'] })
     },
-    onError: () => setError('Upload failed. Use a valid JPG, PNG, or PDF within the configured size limit.'),
+    onError: (error) => {
+      const detail = axios.isAxiosError(error) ? error.response?.data?.detail : undefined
+      setError(typeof detail === 'string' ? detail : 'Upload failed. Please try again.')
+    },
   })
 
   return (

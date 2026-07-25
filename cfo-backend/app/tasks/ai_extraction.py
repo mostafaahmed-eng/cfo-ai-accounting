@@ -93,6 +93,7 @@ async def _find_duplicate(
     candidates = await session.execute(
         select(DraftTransaction).where(
             DraftTransaction.company_id == item.company_id,
+            DraftTransaction.inbox_item_id != item.id,
             DraftTransaction.amount == extracted.amount,
             DraftTransaction.currency == extracted.currency,
             DraftTransaction.transaction_date == extracted.transaction_date,
@@ -139,7 +140,13 @@ async def _finalize_extraction(
         )
     )
     draft = existing_draft.scalars().first()
-    if draft:
+    is_telegram_correction = bool(
+        draft
+        and item.source == "telegram"
+        and draft.status == "needs_clarification"
+        and item.status == "processing"
+    )
+    if draft and not is_telegram_correction:
         item.status = "review_required"
         await session.commit()
         return {
@@ -208,26 +215,43 @@ async def _finalize_extraction(
     description = extracted.description.strip()
     if vendor_name:
         description = f"{description} — {vendor_name}"
-    draft = DraftTransaction(
-        id=uuid4(),
-        company_id=item.company_id,
-        inbox_item_id=item.id,
-        type=extracted.transaction_type,
-        amount=extracted.amount,
-        tax_amount=extracted.tax_amount or 0,
-        currency=extracted.currency.upper(),
-        transaction_date=extracted.transaction_date,
-        description=f"[AI] {description}",
-        category_account_id=None,
-        payment_account_id=None,
-        reference_number=extracted.reference_number,
-        status="ready_for_review",
-        ai_confidence=extracted.confidence.overall,
-        duplicate_status=duplicate_status,
-        duplicate_reason=duplicate_reason,
-        duplicate_of_id=duplicate_of.id if duplicate_of else None,
+    draft_status = (
+        "needs_clarification" if item.source == "telegram" else "ready_for_review"
     )
-    session.add(draft)
+    if draft:
+        draft.type = extracted.transaction_type
+        draft.amount = extracted.amount
+        draft.tax_amount = extracted.tax_amount or 0
+        draft.currency = extracted.currency.upper()
+        draft.transaction_date = extracted.transaction_date
+        draft.description = f"[AI] {description}"
+        draft.reference_number = extracted.reference_number
+        draft.status = draft_status
+        draft.ai_confidence = extracted.confidence.overall
+        draft.duplicate_status = duplicate_status
+        draft.duplicate_reason = duplicate_reason
+        draft.duplicate_of_id = duplicate_of.id if duplicate_of else None
+    else:
+        draft = DraftTransaction(
+            id=uuid4(),
+            company_id=item.company_id,
+            inbox_item_id=item.id,
+            type=extracted.transaction_type,
+            amount=extracted.amount,
+            tax_amount=extracted.tax_amount or 0,
+            currency=extracted.currency.upper(),
+            transaction_date=extracted.transaction_date,
+            description=f"[AI] {description}",
+            category_account_id=None,
+            payment_account_id=None,
+            reference_number=extracted.reference_number,
+            status=draft_status,
+            ai_confidence=extracted.confidence.overall,
+            duplicate_status=duplicate_status,
+            duplicate_reason=duplicate_reason,
+            duplicate_of_id=duplicate_of.id if duplicate_of else None,
+        )
+        session.add(draft)
     item.status = "review_required"
     item.duplicate_status = duplicate_status
     item.duplicate_reason = duplicate_reason
@@ -238,6 +262,7 @@ async def _finalize_extraction(
         "extraction_id": str(extraction.id),
         "draft_id": str(draft.id),
         "duplicate_status": duplicate_status,
+        "category_hint": extracted.category_hint,
     }
 
 
@@ -275,10 +300,39 @@ async def _process_extraction(inbox_item_id: str) -> dict:
         result = await _finalize_extraction(session, item, extraction_result)
         if result.get("draft_id"):
             chat_id = await _get_telegram_chat_id(session, item.company_id)
-            if chat_id:
+            if chat_id and item.source == "telegram":
+                draft_result = await session.execute(
+                    select(DraftTransaction).where(
+                        DraftTransaction.id == result["draft_id"],
+                        DraftTransaction.company_id == item.company_id,
+                    )
+                )
+                draft = draft_result.scalar_one()
+                category_hint = result.get("category_hint") or "Not identified"
                 send_telegram_response.delay(
                     chat_id,
-                    "Extraction complete. A draft is ready for review in the dashboard.",
+                    "Here’s what I extracted:\n"
+                    f"Amount: {draft.currency} {draft.amount}\n"
+                    f"Description: {draft.description.removeprefix('[AI] ')}\n"
+                    f"Category hint: {category_hint}\n"
+                    f"Date: {draft.transaction_date}\n\n"
+                    "Does this look correct?",
+                    {
+                        "inline_keyboard": [
+                            [
+                                {
+                                    "text": "✅ Correct",
+                                    "callback_data": f"confirm:{draft.id}",
+                                }
+                            ],
+                            [
+                                {
+                                    "text": "✏️ Not quite, let me fix it",
+                                    "callback_data": f"correct:{draft.id}",
+                                }
+                            ],
+                        ]
+                    },
                 )
         return result
 

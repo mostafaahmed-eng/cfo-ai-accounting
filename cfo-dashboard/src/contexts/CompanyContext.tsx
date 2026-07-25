@@ -47,9 +47,6 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       if (!companies.some((company) => company.company_id === companyId)) return
       localStorage.setItem('selected_company_id', companyId)
       setSelectedCompanyId(companyId)
-      queryClient.removeQueries({
-        predicate: (query) => query.queryKey[0] !== 'company-memberships',
-      })
       queryClient.invalidateQueries({
         predicate: (query) => query.queryKey[0] !== 'company-memberships',
       })

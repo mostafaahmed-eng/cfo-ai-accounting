@@ -15,7 +15,7 @@ export default function RecentTransactions({ transactions }: { transactions: Rec
                 <p className="text-xs text-gray-500">{String(t.date)}</p>
               </div>
               <span className={`font-semibold ${Number(t.amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                ${Number(t.amount).toLocaleString()}
+                {String(t.currency)} {Number(t.amount).toLocaleString()}
               </span>
             </div>
           ))}

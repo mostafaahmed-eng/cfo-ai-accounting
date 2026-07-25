@@ -1,54 +1,95 @@
+from calendar import monthrange
+from datetime import date, datetime, timezone
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from datetime import datetime, timezone
-from app.models.journal import JournalEntry, JournalLine
+
 from app.models.account import Account
 from app.models.approval import ApprovalRequest
-from app.models.draft_transaction import DraftTransaction
-from app.models.vendor import Vendor
 from app.models.budget import Budget, BudgetLine
+from app.models.company import Company
+from app.models.draft_transaction import DraftTransaction
+from app.models.journal import JournalEntry, JournalLine
+from app.models.vendor import Vendor
 from app.schemas.report import (
-    DashboardResponse,
-    PnLResponse,
-    CashFlowResponse,
     BalanceSheetResponse,
-    ExpenseByCategoryResponse,
-    VendorReportResponse,
     BudgetVsActualResponse,
+    CashFlowResponse,
+    DashboardResponse,
+    ExpenseByCategoryResponse,
+    PnLResponse,
+    VendorReportResponse,
 )
 
 
 class ReportService:
     @staticmethod
-    async def get_dashboard(db: AsyncSession, company_id: str) -> DashboardResponse:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    def _net_income(total_revenue: float, total_expenses: float) -> float:
+        return total_revenue - total_expenses
 
-        # Monthly income: sum of credit on revenue accounts from posted entries
+    @staticmethod
+    async def _base_currency(db: AsyncSession, company_id: str) -> str:
+        result = await db.execute(
+            select(Company.base_currency).where(Company.id == company_id)
+        )
+        return result.scalar_one()
+
+    @staticmethod
+    def _period(
+        start_date: date | None, end_date: date | None
+    ) -> tuple[date, date, bool]:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        default_start = now.date().replace(day=1)
+        default_end = now.date().replace(
+            day=monthrange(now.year, now.month)[1]
+        )
+        is_default = start_date is None and end_date is None
+        return start_date or default_start, end_date or default_end, is_default
+
+    @staticmethod
+    def _period_label(start_date: date, end_date: date, is_default: bool) -> str:
+        return (
+            start_date.strftime("%Y-%m")
+            if is_default
+            else f"{start_date.isoformat()} to {end_date.isoformat()}"
+        )
+
+    @staticmethod
+    async def get_dashboard(
+        db: AsyncSession,
+        company_id: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> DashboardResponse:
+        period_start, period_end, _ = ReportService._period(start_date, end_date)
+
+        # Income: sum of credit on revenue accounts in the selected period
         income_result = await db.execute(
-            select(func.coalesce(func.sum(JournalLine.credit), 0))
+            select(func.coalesce(func.sum(JournalLine.base_credit), 0))
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
             .join(Account, JournalLine.account_id == Account.id)
             .where(
                 JournalEntry.company_id == company_id,
                 JournalEntry.status == "posted",
-                JournalEntry.entry_date >= month_start.date(),
+                JournalEntry.entry_date >= period_start,
+                JournalEntry.entry_date <= period_end,
                 Account.type == "revenue",
             )
         )
         monthly_income = float(income_result.scalar() or 0)
 
-        # Monthly expenses: sum of debit on expense accounts from posted entries
+        # Expenses: sum of debit on expense accounts in the selected period
         expense_result = await db.execute(
-            select(func.coalesce(func.sum(JournalLine.debit), 0))
+            select(func.coalesce(func.sum(JournalLine.base_debit), 0))
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
             .join(Account, JournalLine.account_id == Account.id)
             .where(
                 JournalEntry.company_id == company_id,
                 JournalEntry.status == "posted",
-                JournalEntry.entry_date >= month_start.date(),
+                JournalEntry.entry_date >= period_start,
+                JournalEntry.entry_date <= period_end,
                 Account.type == "expense",
             )
         )
@@ -79,11 +120,13 @@ class ReportService:
                     "description": tx.description,
                     "date": str(tx.transaction_date),
                     "amount": float(tx.amount) * (-1 if tx.type == "expense" else 1),
+                    "currency": tx.currency,
                     "status": tx.status,
                 }
             )
 
         return DashboardResponse(
+            base_currency=await ReportService._base_currency(db, company_id),
             monthly_income=monthly_income,
             monthly_expenses=monthly_expenses,
             net_cash_flow=monthly_income - monthly_expenses,
@@ -93,15 +136,21 @@ class ReportService:
         )
 
     @staticmethod
-    async def get_profit_and_loss(db: AsyncSession, company_id: str) -> PnLResponse:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    async def get_profit_and_loss(
+        db: AsyncSession,
+        company_id: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> PnLResponse:
+        period_start, period_end, is_default = ReportService._period(
+            start_date, end_date
+        )
 
         # Revenue by account
         rev_result = await db.execute(
             select(
                 Account.name_en,
-                func.coalesce(func.sum(JournalLine.credit), 0).label("amount"),
+                func.coalesce(func.sum(JournalLine.base_credit), 0).label("amount"),
             )
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
@@ -109,7 +158,8 @@ class ReportService:
             .where(
                 JournalEntry.company_id == company_id,
                 JournalEntry.status == "posted",
-                JournalEntry.entry_date >= month_start.date(),
+                JournalEntry.entry_date >= period_start,
+                JournalEntry.entry_date <= period_end,
                 Account.type == "revenue",
             )
             .group_by(Account.name_en)
@@ -121,7 +171,7 @@ class ReportService:
         exp_result = await db.execute(
             select(
                 Account.name_en,
-                func.coalesce(func.sum(JournalLine.debit), 0).label("amount"),
+                func.coalesce(func.sum(JournalLine.base_debit), 0).label("amount"),
             )
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
@@ -129,7 +179,8 @@ class ReportService:
             .where(
                 JournalEntry.company_id == company_id,
                 JournalEntry.status == "posted",
-                JournalEntry.entry_date >= month_start.date(),
+                JournalEntry.entry_date >= period_start,
+                JournalEntry.entry_date <= period_end,
                 Account.type == "expense",
             )
             .group_by(Account.name_en)
@@ -138,55 +189,30 @@ class ReportService:
         total_expenses = sum(e["amount"] for e in expenses)
 
         return PnLResponse(
-            period=month_start.strftime("%Y-%m"),
+            base_currency=await ReportService._base_currency(db, company_id),
+            period=ReportService._period_label(
+                period_start, period_end, is_default
+            ),
             revenue=revenue,
             expenses=expenses,
-            net_income=total_revenue - total_expenses,
+            net_income=ReportService._net_income(total_revenue, total_expenses),
         )
 
     @staticmethod
-    async def get_cash_flow(db: AsyncSession, company_id: str) -> CashFlowResponse:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-        # Net from all posted entries
-        net_result = await db.execute(
-            select(
-                func.coalesce(func.sum(JournalLine.debit), 0)
-                - func.coalesce(func.sum(JournalLine.credit), 0)
-            )
-            .select_from(JournalLine)
-            .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
-            .where(
-                JournalEntry.company_id == company_id,
-                JournalEntry.status == "posted",
-                JournalEntry.entry_date >= month_start.date(),
-            )
-        )
-        net = float(net_result.scalar() or 0)
-
-        return CashFlowResponse(
-            period=month_start.strftime("%Y-%m"),
-            operating=net,
-            investing=0,
-            financing=0,
-            net=net,
-            monthly_data=[],
+    async def get_cash_flow(
+        db: AsyncSession,
+        company_id: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> CashFlowResponse:
+        period_start, period_end, is_default = ReportService._period(
+            start_date, end_date
         )
 
-    @staticmethod
-    async def get_balance_sheet(
-        db: AsyncSession, company_id: str
-    ) -> BalanceSheetResponse:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-        # Compute balances per account type from posted entries
-        result = await db.execute(
+        flow_result = await db.execute(
             select(
-                Account.type,
-                Account.name_en,
-                func.coalesce(func.sum(JournalLine.debit), 0).label("debit"),
-                func.coalesce(func.sum(JournalLine.credit), 0).label("credit"),
+                func.coalesce(func.sum(JournalLine.base_debit), 0),
+                func.coalesce(func.sum(JournalLine.base_credit), 0),
             )
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
@@ -194,12 +220,68 @@ class ReportService:
             .where(
                 JournalEntry.company_id == company_id,
                 JournalEntry.status == "posted",
+                JournalEntry.entry_date >= period_start,
+                JournalEntry.entry_date <= period_end,
+                Account.is_payment_account,
+            )
+        )
+        inflows, outflows = flow_result.one()
+        inflows = float(inflows or 0)
+        outflows = float(outflows or 0)
+        net = inflows - outflows
+
+        return CashFlowResponse(
+            base_currency=await ReportService._base_currency(db, company_id),
+            period=ReportService._period_label(
+                period_start, period_end, is_default
+            ),
+            operating=net,
+            investing=0,
+            financing=0,
+            net=net,
+            monthly_data=[
+                {
+                    "month": ReportService._period_label(
+                        period_start, period_end, is_default
+                    ),
+                    "income": inflows,
+                    "expenses": outflows,
+                    "net": net,
+                }
+            ],
+        )
+
+    @staticmethod
+    async def get_balance_sheet(
+        db: AsyncSession,
+        company_id: str,
+        as_of: date | None = None,
+    ) -> BalanceSheetResponse:
+        report_date = as_of or datetime.now(timezone.utc).date()
+
+        # Compute balances per account type from posted entries
+        result = await db.execute(
+            select(
+                Account.type,
+                Account.name_en,
+                func.coalesce(func.sum(JournalLine.base_debit), 0).label("debit"),
+                func.coalesce(func.sum(JournalLine.base_credit), 0).label("credit"),
+            )
+            .select_from(JournalLine)
+            .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
+            .join(Account, JournalLine.account_id == Account.id)
+            .where(
+                JournalEntry.company_id == company_id,
+                JournalEntry.status == "posted",
+                JournalEntry.entry_date <= report_date,
             )
             .group_by(Account.type, Account.name_en)
         )
         rows = result.all()
 
         assets, liabilities, equity = [], [], []
+        cumulative_revenue = 0.0
+        cumulative_expenses = 0.0
         for acc_type, name, debit, credit in rows:
             amount = (
                 float(debit) - float(credit)
@@ -213,13 +295,23 @@ class ReportService:
                 liabilities.append(entry)
             elif acc_type == "equity":
                 equity.append(entry)
+            elif acc_type == "revenue":
+                cumulative_revenue += float(credit) - float(debit)
+            elif acc_type == "expense":
+                cumulative_expenses += float(debit) - float(credit)
+
+        current_earnings = ReportService._net_income(
+            cumulative_revenue, cumulative_expenses
+        )
+        equity.append({"account": "Current Earnings", "amount": current_earnings})
 
         total_assets = sum(a["amount"] for a in assets)
         total_liabilities = sum(liab["amount"] for liab in liabilities)
         total_equity = sum(e["amount"] for e in equity)
 
         return BalanceSheetResponse(
-            as_of=now.strftime("%Y-%m-%d"),
+            base_currency=await ReportService._base_currency(db, company_id),
+            as_of=report_date.isoformat(),
             assets=assets,
             liabilities=liabilities,
             equity=equity,
@@ -230,15 +322,19 @@ class ReportService:
 
     @staticmethod
     async def get_expenses_by_category(
-        db: AsyncSession, company_id: str
+        db: AsyncSession,
+        company_id: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> ExpenseByCategoryResponse:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        period_start, period_end, is_default = ReportService._period(
+            start_date, end_date
+        )
 
         result = await db.execute(
             select(
                 Account.name_en,
-                func.coalesce(func.sum(JournalLine.debit), 0).label("amount"),
+                func.coalesce(func.sum(JournalLine.base_debit), 0).label("amount"),
             )
             .select_from(JournalLine)
             .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
@@ -246,7 +342,8 @@ class ReportService:
             .where(
                 JournalEntry.company_id == company_id,
                 JournalEntry.status == "posted",
-                JournalEntry.entry_date >= month_start.date(),
+                JournalEntry.entry_date >= period_start,
+                JournalEntry.entry_date <= period_end,
                 Account.type == "expense",
             )
             .group_by(Account.name_en)
@@ -255,7 +352,10 @@ class ReportService:
         total = sum(c["amount"] for c in categories)
 
         return ExpenseByCategoryResponse(
-            period=month_start.strftime("%Y-%m"),
+            base_currency=await ReportService._base_currency(db, company_id),
+            period=ReportService._period_label(
+                period_start, period_end, is_default
+            ),
             categories=categories,
             total=total,
         )
@@ -319,7 +419,7 @@ class ReportService:
         for line, account_name in lines_result.all():
             # Get actual spending for this account
             actual_result = await db.execute(
-                select(func.coalesce(func.sum(JournalLine.debit), 0))
+                select(func.coalesce(func.sum(JournalLine.base_debit), 0))
                 .select_from(JournalLine)
                 .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
                 .where(

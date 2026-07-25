@@ -31,6 +31,18 @@ class DocumentProviderError(RuntimeError):
     pass
 
 
+def _parse_provider_json(content: str) -> dict:
+    candidate = content.strip()
+    if candidate.startswith("```"):
+        lines = candidate.splitlines()
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            candidate = "\n".join(lines[1:-1]).strip()
+    parsed = json.loads(candidate)
+    if not isinstance(parsed, dict):
+        raise TypeError("Provider response must be a JSON object")
+    return parsed
+
+
 @dataclass
 class ValidatedUpload:
     content: bytes
@@ -58,7 +70,19 @@ async def validate_upload(file: UploadFile) -> ValidatedUpload:
     if not content:
         raise DocumentValidationError("empty_file", "The uploaded file is empty")
 
-    actual_mime = magic.from_buffer(bytes(content[:8192]), mime=True)
+    return validate_content(bytes(content), declared_mime)
+
+
+def validate_content(content: bytes, declared_mime: str) -> ValidatedUpload:
+    declared_mime = declared_mime.lower()
+    if declared_mime not in MIME_EXTENSIONS:
+        raise DocumentValidationError("unsupported_mime", "Unsupported file type")
+    if not content:
+        raise DocumentValidationError("empty_file", "The uploaded file is empty")
+    if len(content) > settings.MAX_UPLOAD_SIZE:
+        raise DocumentValidationError("file_too_large", "File exceeds upload limit")
+
+    actual_mime = magic.from_buffer(content[:8192], mime=True)
     if actual_mime != declared_mime:
         raise DocumentValidationError(
             "mime_mismatch", "Declared and detected file types do not match"
@@ -66,11 +90,11 @@ async def validate_upload(file: UploadFile) -> ValidatedUpload:
     if actual_mime not in MIME_EXTENSIONS:
         raise DocumentValidationError("unsupported_mime", "Unsupported file type")
 
-    _validate_file_structure(bytes(content), actual_mime)
+    _validate_file_structure(content, actual_mime)
     return ValidatedUpload(
-        content=bytes(content),
+        content=content,
         mime_type=actual_mime,
-        sha256_hash=digest.hexdigest(),
+        sha256_hash=hashlib.sha256(content).hexdigest(),
         extension=MIME_EXTENSIONS[actual_mime],
     )
 
@@ -148,9 +172,16 @@ async def extract_text_from_document(
                                 {
                                     "type": "text",
                                     "text": (
-                                        "Transcribe all financial text from this "
-                                        "receipt or invoice. Return JSON with one "
-                                        'field: {"text": "..."}'
+                                        "Transcribe this receipt or invoice completely. "
+                                        "Preserve all visible Arabic and English labels "
+                                        "with their values, including vendor, invoice "
+                                        "number, dates, currency, line-item descriptions, "
+                                        "quantities, prices, tax, subtotals, and totals. "
+                                        "Keep each label associated with its value and "
+                                        "each table row on its own line. Do not return "
+                                        "unlabeled numbers when a visible label or column "
+                                        "heading provides context. Return JSON with one "
+                                        'field only: {"text": "..."}'
                                     ),
                                 },
                             ],
@@ -162,7 +193,7 @@ async def extract_text_from_document(
             response.raise_for_status()
             payload = response.json()
             content_text = payload["choices"][0]["message"]["content"]
-            parsed = json.loads(content_text)
+            parsed = _parse_provider_json(content_text)
             text = parsed.get("text", "").strip()
             if not text:
                 raise DocumentProviderError("OCR returned no readable text")

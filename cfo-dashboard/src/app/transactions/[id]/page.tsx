@@ -4,7 +4,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
-import type { DraftTransaction } from '@/lib/types'
+import type { Account, DraftTransaction } from '@/lib/types'
 import { useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
 
@@ -14,6 +14,9 @@ export default function TransactionDetailPage() {
   const queryClient = useQueryClient()
   const [editMode, setEditMode] = useState(false)
   const [form, setForm] = useState<Partial<DraftTransaction>>({})
+  const [categoryAccountId, setCategoryAccountId] = useState('')
+  const [paymentAccountId, setPaymentAccountId] = useState('')
+  const [approvalError, setApprovalError] = useState('')
 
   const { data: transaction, isLoading } = useQuery<DraftTransaction>({
     queryKey: ['draft-transaction', id],
@@ -23,8 +26,33 @@ export default function TransactionDetailPage() {
     },
   })
 
+  const { data: accounts = [] } = useQuery<Account[]>({
+    queryKey: ['accounts'],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/accounts')
+      return data
+    },
+  })
+
+  const { data: extractions = [] } = useQuery<
+    Array<{ validated_result: { category_hint?: string | null } | null }>
+  >({
+    queryKey: ['ai-extractions', transaction?.inbox_item_id],
+    queryFn: async () => {
+      const { data } = await apiClient.get(
+        `/ai-extraction/${transaction?.inbox_item_id}`,
+      )
+      return data
+    },
+    enabled: Boolean(transaction?.inbox_item_id),
+  })
+
   useEffect(() => {
-    if (transaction) setForm(transaction)
+    if (transaction) {
+      setForm(transaction)
+      setCategoryAccountId(transaction.category_account_id || '')
+      setPaymentAccountId(transaction.payment_account_id || '')
+    }
   }, [transaction])
 
   const updateMutation = useMutation({
@@ -41,13 +69,36 @@ export default function TransactionDetailPage() {
 
   const approveMutation = useMutation({
     mutationFn: async () => {
-      await apiClient.post(`/draft-transactions/${id}/approve`)
+      setApprovalError('')
+      await apiClient.patch(`/draft-transactions/${id}`, {
+        category_account_id: categoryAccountId,
+        payment_account_id: paymentAccountId,
+      })
+      const { data } = await apiClient.post(`/draft-transactions/${id}/approve`)
+      return data
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['draft-transaction', id] })
       queryClient.invalidateQueries({ queryKey: ['draft-transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['inbox'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['report-cashflow'] })
+      queryClient.invalidateQueries({ queryKey: ['report-expenses-by-category'] })
+    },
+    onError: (error: { response?: { data?: { detail?: string } } }) => {
+      setApprovalError(error.response?.data?.detail || 'Approval failed')
     },
   })
+
+  const categoryAccounts = accounts.filter((account) => {
+    if (!account.is_active || account.is_payment_account) return false
+    if (transaction?.type === 'income') return account.type === 'revenue'
+    if (transaction?.type === 'transfer') return account.type === 'asset'
+    return account.type === 'expense'
+  })
+  const paymentAccounts = accounts.filter(
+    (account) => account.is_active && account.is_payment_account,
+  )
 
   return (
     <div className="flex min-h-screen">
@@ -66,11 +117,6 @@ export default function TransactionDetailPage() {
                   {!editMode && transaction.status !== 'posted' && transaction.status !== 'approved' && (
                     <button onClick={() => setEditMode(true)} className="text-blue-600 hover:underline text-sm">
                       Edit
-                    </button>
-                  )}
-                  {(transaction.status === 'ready_for_review' || transaction.status === 'needs_clarification') && (
-                    <button onClick={() => approveMutation.mutate()} className="bg-green-600 text-white px-4 py-2 rounded text-sm">
-                      Approve
                     </button>
                   )}
                 </div>
@@ -114,6 +160,65 @@ export default function TransactionDetailPage() {
                   )}
                   {transaction.reference_number && (
                     <div className="flex justify-between"><span className="text-gray-500">Reference</span><span>{transaction.reference_number}</span></div>
+                  )}
+                  {transaction.status === 'needs_clarification' && (
+                    <div className="rounded bg-amber-50 p-3 text-amber-800">
+                      Waiting on the submitter to confirm or correct the extracted details.
+                    </div>
+                  )}
+                  {transaction.status === 'ready_for_review' && (
+                    <div className="space-y-4 border-t pt-4">
+                      <p className="font-medium">Accounting review</p>
+                      {extractions[0]?.validated_result?.category_hint && (
+                        <p className="rounded bg-blue-50 p-3 text-blue-800">
+                          AI category suggestion: {extractions[0].validated_result.category_hint}
+                        </p>
+                      )}
+                      <div>
+                        <label className="block text-sm font-medium mb-1" htmlFor="category-account">
+                          {transaction.type === 'income' ? 'Income account' : 'Category account'}
+                        </label>
+                        <select
+                          id="category-account"
+                          value={categoryAccountId}
+                          onChange={(event) => setCategoryAccountId(event.target.value)}
+                          className="w-full border rounded px-3 py-2 text-sm"
+                        >
+                          <option value="">Select an account</option>
+                          {categoryAccounts.map((account) => (
+                            <option key={account.id} value={account.id}>
+                              {account.code} — {account.name_en}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1" htmlFor="payment-account">
+                          Payment account
+                        </label>
+                        <select
+                          id="payment-account"
+                          value={paymentAccountId}
+                          onChange={(event) => setPaymentAccountId(event.target.value)}
+                          className="w-full border rounded px-3 py-2 text-sm"
+                        >
+                          <option value="">Select an account</option>
+                          {paymentAccounts.map((account) => (
+                            <option key={account.id} value={account.id}>
+                              {account.code} — {account.name_en}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {approvalError && <p className="text-sm text-red-700">{approvalError}</p>}
+                      <button
+                        onClick={() => approveMutation.mutate()}
+                        disabled={!categoryAccountId || !paymentAccountId || approveMutation.isPending}
+                        className="bg-green-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                      >
+                        {approveMutation.isPending ? 'Approving…' : 'Approve and post'}
+                      </button>
+                    </div>
                   )}
                 </div>
               )}

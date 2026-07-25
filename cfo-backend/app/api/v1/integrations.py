@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from uuid import uuid4
-from app.database import get_db
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import get_settings
+from app.database import get_db
+from app.dependencies import get_current_company_id, get_current_user
 from app.models.telegram import TelegramConnection, TelegramPairing
 from app.models.user import User
 from app.schemas.telegram import TelegramStatusResponse
-from app.dependencies import get_current_user, get_current_company_id
 from app.services.audit import create_audit_log
 from app.services.telegram_pairing import create_pairing
 
@@ -21,6 +23,18 @@ async def connect_telegram(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
+    stale_disabled_result = await db.execute(
+        select(TelegramConnection)
+        .where(
+            TelegramConnection.company_id == company_id,
+            TelegramConnection.status == "disabled",
+            TelegramConnection.telegram_chat_id.is_not(None),
+        )
+        .with_for_update()
+    )
+    for stale_connection in stale_disabled_result.scalars().all():
+        stale_connection.telegram_chat_id = None
+
     result = await db.execute(
         select(TelegramConnection).where(
             TelegramConnection.company_id == company_id,
@@ -39,15 +53,32 @@ async def connect_telegram(
     if existing:
         connection = existing
     else:
-        connection = TelegramConnection(
-            id=uuid4(),
-            company_id=company_id,
-            bot_username=settings.TELEGRAM_BOT_USERNAME or "bot",
-            telegram_chat_id=None,
-            connected_by=str(user.id),
-            status="pending_chat_id",
+        disabled_result = await db.execute(
+            select(TelegramConnection)
+            .where(
+                TelegramConnection.company_id == company_id,
+                TelegramConnection.status == "disabled",
+            )
+            .order_by(TelegramConnection.updated_at.desc())
+            .limit(1)
+            .with_for_update()
         )
-        db.add(connection)
+        connection = disabled_result.scalar_one_or_none()
+        if connection:
+            connection.bot_username = settings.TELEGRAM_BOT_USERNAME or "bot"
+            connection.telegram_chat_id = None
+            connection.connected_by = str(user.id)
+            connection.status = "pending_chat_id"
+        else:
+            connection = TelegramConnection(
+                id=uuid4(),
+                company_id=company_id,
+                bot_username=settings.TELEGRAM_BOT_USERNAME or "bot",
+                telegram_chat_id=None,
+                connected_by=str(user.id),
+                status="pending_chat_id",
+            )
+            db.add(connection)
         await db.flush()
 
     pairing_creation = await create_pairing(
@@ -88,6 +119,7 @@ async def disconnect_telegram(
     connection = result.scalar_one_or_none()
     if connection:
         old_status = connection.status
+        connection.telegram_chat_id = None
         connection.status = "disabled"
         pending_pairings = await db.execute(
             select(TelegramPairing)
@@ -109,7 +141,7 @@ async def disconnect_telegram(
             entity_type="telegram_connection",
             entity_id=str(connection.id),
             before_data={"status": old_status},
-            after_data={"status": "disabled"},
+            after_data={"status": "disabled", "chat_binding_cleared": True},
         )
     return {"message": "Disconnected"}
 

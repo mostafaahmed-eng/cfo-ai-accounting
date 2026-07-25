@@ -5,12 +5,17 @@ import Header from '@/components/layout/Header'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
 import type { BalanceSheetData } from '@/lib/types'
+import { AsOfDatePicker } from '@/components/reports/ReportDatePicker'
+import { useReportAsOfDate } from '@/hooks/useReportDates'
 
 export default function BalanceSheetPage() {
+  const { asOf, setAsOf } = useReportAsOfDate()
   const { data: bs, isLoading } = useQuery<BalanceSheetData>({
-    queryKey: ['report-balance-sheet'],
+    queryKey: ['report-balance-sheet', asOf],
     queryFn: async () => {
-      const { data } = await apiClient.get('/reports/balance-sheet')
+      const { data } = await apiClient.get('/reports/balance-sheet', {
+        params: { as_of: asOf },
+      })
       return data
     },
   })
@@ -22,6 +27,7 @@ export default function BalanceSheetPage() {
         <Header />
         <main className="p-6">
           <h2 className="text-2xl font-bold mb-6">Balance Sheet</h2>
+          <AsOfDatePicker asOf={asOf} onChange={setAsOf} />
           {isLoading ? (
             <p className="text-gray-500">Loading...</p>
           ) : bs ? (
@@ -35,12 +41,12 @@ export default function BalanceSheetPage() {
                   ) : bs.assets.map((item, i) => (
                     <div key={i} className="flex justify-between text-sm py-1 border-b">
                       <span>{String(item.account)}</span>
-                      <span>${Number(item.amount).toLocaleString()}</span>
+                      <span>{bs.base_currency} {Number(item.amount).toLocaleString()}</span>
                     </div>
                   ))}
                   <div className="flex justify-between text-sm font-bold pt-2">
                     <span>Total Assets</span>
-                    <span>${bs.total_assets.toLocaleString()}</span>
+                    <span>{bs.base_currency} {bs.total_assets.toLocaleString()}</span>
                   </div>
                 </div>
                 <div>
@@ -50,12 +56,12 @@ export default function BalanceSheetPage() {
                   ) : bs.liabilities.map((item, i) => (
                     <div key={i} className="flex justify-between text-sm py-1 border-b">
                       <span>{String(item.account)}</span>
-                      <span>${Number(item.amount).toLocaleString()}</span>
+                      <span>{bs.base_currency} {Number(item.amount).toLocaleString()}</span>
                     </div>
                   ))}
                   <div className="flex justify-between text-sm font-bold pt-2">
                     <span>Total Liabilities</span>
-                    <span>${bs.total_liabilities.toLocaleString()}</span>
+                    <span>{bs.base_currency} {bs.total_liabilities.toLocaleString()}</span>
                   </div>
                 </div>
                 <div>
@@ -65,12 +71,12 @@ export default function BalanceSheetPage() {
                   ) : bs.equity.map((item, i) => (
                     <div key={i} className="flex justify-between text-sm py-1 border-b">
                       <span>{String(item.account)}</span>
-                      <span>${Number(item.amount).toLocaleString()}</span>
+                      <span>{bs.base_currency} {Number(item.amount).toLocaleString()}</span>
                     </div>
                   ))}
                   <div className="flex justify-between text-sm font-bold pt-2">
                     <span>Total Equity</span>
-                    <span>${bs.total_equity.toLocaleString()}</span>
+                    <span>{bs.base_currency} {bs.total_equity.toLocaleString()}</span>
                   </div>
                 </div>
               </div>

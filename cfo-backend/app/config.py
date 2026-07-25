@@ -1,6 +1,7 @@
-from pydantic_settings import BaseSettings
-from pydantic import field_validator
 from functools import lru_cache
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -13,7 +14,11 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    FX_PROVIDER_BASE_URL: str = "https://open.er-api.com/v6"
+    FX_PROVIDER_TIMEOUT_SECONDS: float = 10.0
+    FX_AUTO_FETCH_MAX_AGE_DAYS: int = 2
     S3_ENDPOINT_URL: str = ""
+    S3_PUBLIC_ENDPOINT_URL: str = ""
     S3_ACCESS_KEY_ID: str = ""
     S3_SECRET_ACCESS_KEY: str = ""
     S3_BUCKET_NAME: str = "cfo-documents"
