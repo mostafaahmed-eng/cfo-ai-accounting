@@ -1,10 +1,13 @@
 import asyncio
 import logging
+from datetime import UTC
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from app.tasks.celery_app import celery_app
+
 from app.config import get_settings
 from app.models.journal import JournalEntry
+from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -58,10 +61,10 @@ async def _post(journal_entry_id: str) -> dict:
                     "message": "Negative debit or credit not allowed",
                 }
 
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         entry.status = "posted"
-        entry.posted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        entry.posted_at = datetime.now(UTC).replace(tzinfo=None)
         await session.commit()
 
         return {"status": "ok", "entry_id": journal_entry_id}

@@ -2,7 +2,7 @@ import hashlib
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -46,7 +46,7 @@ async def create_pairing(
     company_id,
     user_id,
 ) -> PairingCreation:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
 
     old_pairings = await db.execute(
         select(TelegramPairing)
@@ -132,7 +132,7 @@ async def consume_pairing(
         )
         return PairingResult(connection=None, reason="invalid")
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     if pairing.status != "pending":
         pairing.failed_attempts += 1
         pairing.last_failed_at = now

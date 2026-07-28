@@ -26,8 +26,8 @@ async def test_submit_arabic_expense_and_approve(client):
     # Verify text processing detects Arabic correctly
     from app.core.text_processing import (
         detect_language,
-        extract_currency,
         extract_amount,
+        extract_currency,
     )
 
     lang = detect_language("دفعت ٥٠٠ جنيه إعلانات")

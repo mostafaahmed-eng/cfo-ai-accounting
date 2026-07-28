@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field
-from uuid import UUID
 from datetime import date, datetime
 from typing import Any, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, Field
 
 
 class VendorInfo(BaseModel):

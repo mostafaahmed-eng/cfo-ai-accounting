@@ -1,4 +1,5 @@
 from decimal import Decimal
+
 import pytest
 
 
@@ -10,7 +11,7 @@ class TestExchangeRateCalculations:
         assert converted == Decimal("100.00")
 
     def test_usd_to_egp(self):
-        amount_usd = Decimal("100")
+        amount_usd = Decimal(100)
         rate = Decimal("30.5")
         amount_egp = amount_usd * rate
         assert amount_egp == Decimal("3050.00")
@@ -33,9 +34,9 @@ class TestExchangeRateCalculations:
         assert historical_amount != amount * rate_today
 
     def test_zero_amount(self):
-        amount = Decimal("0")
+        amount = Decimal(0)
         rate = Decimal("30.50")
-        assert amount * rate == Decimal("0")
+        assert amount * rate == Decimal(0)
 
     def test_small_amount_precision(self):
         amount = Decimal("0.01")

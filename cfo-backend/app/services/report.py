@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,11 +38,9 @@ class ReportService:
     def _period(
         start_date: date | None, end_date: date | None
     ) -> tuple[date, date, bool]:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         default_start = now.date().replace(day=1)
-        default_end = now.date().replace(
-            day=monthrange(now.year, now.month)[1]
-        )
+        default_end = now.date().replace(day=monthrange(now.year, now.month)[1])
         is_default = start_date is None and end_date is None
         return start_date or default_start, end_date or default_end, is_default
 
@@ -190,9 +188,7 @@ class ReportService:
 
         return PnLResponse(
             base_currency=await ReportService._base_currency(db, company_id),
-            period=ReportService._period_label(
-                period_start, period_end, is_default
-            ),
+            period=ReportService._period_label(period_start, period_end, is_default),
             revenue=revenue,
             expenses=expenses,
             net_income=ReportService._net_income(total_revenue, total_expenses),
@@ -232,9 +228,7 @@ class ReportService:
 
         return CashFlowResponse(
             base_currency=await ReportService._base_currency(db, company_id),
-            period=ReportService._period_label(
-                period_start, period_end, is_default
-            ),
+            period=ReportService._period_label(period_start, period_end, is_default),
             operating=net,
             investing=0,
             financing=0,
@@ -257,7 +251,7 @@ class ReportService:
         company_id: str,
         as_of: date | None = None,
     ) -> BalanceSheetResponse:
-        report_date = as_of or datetime.now(timezone.utc).date()
+        report_date = as_of or datetime.now(UTC).date()
 
         # Compute balances per account type from posted entries
         result = await db.execute(
@@ -353,16 +347,14 @@ class ReportService:
 
         return ExpenseByCategoryResponse(
             base_currency=await ReportService._base_currency(db, company_id),
-            period=ReportService._period_label(
-                period_start, period_end, is_default
-            ),
+            period=ReportService._period_label(period_start, period_end, is_default),
             categories=categories,
             total=total,
         )
 
     @staticmethod
     async def get_vendors(db: AsyncSession, company_id: str) -> VendorReportResponse:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         result = await db.execute(
@@ -392,7 +384,7 @@ class ReportService:
     async def get_budget_vs_actual(
         db: AsyncSession, company_id: str
     ) -> BudgetVsActualResponse:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         # Get active budgets

@@ -1,9 +1,11 @@
-import pytest
+from datetime import UTC, datetime
 from uuid import uuid4
-from datetime import datetime, timezone
-from app.models.user import User
-from app.models.company import Company, CompanyMember
+
+import pytest
+
 from app.enums import UserStatus
+from app.models.company import Company, CompanyMember
+from app.models.user import User
 
 
 def _make_user(email="multi@example.com"):
@@ -34,7 +36,7 @@ def _make_membership(user_id, company_id, role="MEMBER", status="active"):
         company_id=company_id,
         role=role,
         status=status,
-        joined_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        joined_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
 
@@ -60,8 +62,9 @@ async def test_single_membership_returns_that_company(db_session):
 @pytest.mark.asyncio
 async def test_multiple_memberships_require_explicit_selection(db_session):
     """Multiple active memberships never trigger an implicit company choice."""
-    from app.dependencies import resolve_company_membership
     from fastapi import HTTPException
+
+    from app.dependencies import resolve_company_membership
 
     user = _make_user("owner@example.com")
     company_member = _make_company("Member Co")
@@ -87,8 +90,9 @@ async def test_multiple_memberships_require_explicit_selection(db_session):
 
 @pytest.mark.asyncio
 async def test_unknown_explicit_membership_fails_safely(db_session):
-    from app.dependencies import resolve_company_membership
     from fastapi import HTTPException
+
+    from app.dependencies import resolve_company_membership
 
     user = _make_user("noowner@example.com")
     co_a = _make_company("Alpha Co")
@@ -112,8 +116,9 @@ async def test_unknown_explicit_membership_fails_safely(db_session):
 @pytest.mark.asyncio
 async def test_no_memberships_raises_403(db_session):
     """User with zero active memberships → 403."""
-    from app.dependencies import resolve_company_membership
     from fastapi import HTTPException
+
+    from app.dependencies import resolve_company_membership
 
     user = _make_user("lonely@example.com")
     db_session.add(user)
@@ -127,8 +132,9 @@ async def test_no_memberships_raises_403(db_session):
 @pytest.mark.asyncio
 async def test_only_inactive_memberships_raises_403(db_session):
     """User has memberships but all are disabled → 403."""
-    from app.dependencies import resolve_company_membership
     from fastapi import HTTPException
+
+    from app.dependencies import resolve_company_membership
 
     user = _make_user("disabled@example.com")
     company = _make_company("Disabled Co")

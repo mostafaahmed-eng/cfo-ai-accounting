@@ -1,20 +1,20 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
+from app.dependencies import get_current_company_id, get_current_user
 from app.models.user import User
 from app.schemas.report import (
-    DashboardResponse,
-    PnLResponse,
-    CashFlowResponse,
     BalanceSheetResponse,
-    ExpenseByCategoryResponse,
-    VendorReportResponse,
     BudgetVsActualResponse,
+    CashFlowResponse,
+    DashboardResponse,
+    ExpenseByCategoryResponse,
+    PnLResponse,
+    VendorReportResponse,
 )
-from app.dependencies import get_current_user, get_current_company_id
 from app.services.report import ReportService
 
 router = APIRouter()
@@ -54,9 +54,7 @@ async def dashboard(
     db: AsyncSession = Depends(get_db),
 ):
     parsed_start, parsed_end = _report_range(start_date, end_date)
-    return await ReportService.get_dashboard(
-        db, company_id, parsed_start, parsed_end
-    )
+    return await ReportService.get_dashboard(db, company_id, parsed_start, parsed_end)
 
 
 @router.get("/profit-and-loss", response_model=PnLResponse)
@@ -82,9 +80,7 @@ async def cash_flow(
     db: AsyncSession = Depends(get_db),
 ):
     parsed_start, parsed_end = _report_range(start_date, end_date)
-    return await ReportService.get_cash_flow(
-        db, company_id, parsed_start, parsed_end
-    )
+    return await ReportService.get_cash_flow(db, company_id, parsed_start, parsed_end)
 
 
 @router.get("/balance-sheet", response_model=BalanceSheetResponse)

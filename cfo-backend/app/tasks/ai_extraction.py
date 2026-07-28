@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
@@ -12,8 +12,10 @@ from app.models.ai_extraction import AIExtraction
 from app.models.draft_transaction import DraftTransaction
 from app.models.inbox_item import InboxItem
 from app.models.telegram import TelegramConnection
+from app.models.vendor import Vendor
 from app.schemas.ai_extraction import ExtractionResult
 from app.services.ai_extraction import EXTRACTION_PROMPT_VERSION, extract_from_text
+from app.services.telegram_draft_review import draft_review_message
 from app.tasks.celery_app import celery_app
 from app.tasks.telegram_responses import send_telegram_response
 
@@ -255,7 +257,7 @@ async def _finalize_extraction(
     item.status = "review_required"
     item.duplicate_status = duplicate_status
     item.duplicate_reason = duplicate_reason
-    item.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    item.processed_at = datetime.now(UTC).replace(tzinfo=None)
     await session.commit()
     return {
         "status": "review_required",
@@ -308,32 +310,17 @@ async def _process_extraction(inbox_item_id: str) -> dict:
                     )
                 )
                 draft = draft_result.scalar_one()
-                category_hint = result.get("category_hint") or "Not identified"
-                send_telegram_response.delay(
-                    chat_id,
-                    "Here’s what I extracted:\n"
-                    f"Amount: {draft.currency} {draft.amount}\n"
-                    f"Description: {draft.description.removeprefix('[AI] ')}\n"
-                    f"Category hint: {category_hint}\n"
-                    f"Date: {draft.transaction_date}\n\n"
-                    "Does this look correct?",
-                    {
-                        "inline_keyboard": [
-                            [
-                                {
-                                    "text": "✅ Correct",
-                                    "callback_data": f"confirm:{draft.id}",
-                                }
-                            ],
-                            [
-                                {
-                                    "text": "✏️ Not quite, let me fix it",
-                                    "callback_data": f"correct:{draft.id}",
-                                }
-                            ],
-                        ]
-                    },
-                )
+                vendor_name = None
+                if draft.vendor_id:
+                    vendor_result = await session.execute(
+                        select(Vendor.name).where(
+                            Vendor.id == draft.vendor_id,
+                            Vendor.company_id == draft.company_id,
+                        )
+                    )
+                    vendor_name = vendor_result.scalar_one_or_none()
+                message, markup = draft_review_message(draft, vendor_name)
+                send_telegram_response.delay(chat_id, message, markup)
         return result
 
 

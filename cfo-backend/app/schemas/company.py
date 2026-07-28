@@ -1,7 +1,9 @@
-from pydantic import BaseModel
-from uuid import UUID
 from datetime import datetime
-from app.enums import UserRole, MemberStatus
+from uuid import UUID
+
+from pydantic import BaseModel
+
+from app.enums import MemberStatus, UserRole
 
 
 class CompanyCreate(BaseModel):

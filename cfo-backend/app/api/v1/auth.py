@@ -1,24 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from jose import JWTError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import get_settings
+from app.core.security import hash_password, verify_password
 from app.database import get_db
+from app.dependencies import get_current_user
+from app.limiter import limiter
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
+    PasswordChangeRequest,
     RefreshRequest,
     RefreshResponse,
     UserResponse,
     UserUpdate,
-    PasswordChangeRequest,
 )
-from app.dependencies import get_current_user
-from app.core.security import verify_password, hash_password
-from app.services.auth import create_access_token, create_refresh_token, decode_token
 from app.services.audit import create_audit_log
-from app.limiter import limiter
-from app.config import get_settings
+from app.services.auth import create_access_token, create_refresh_token, decode_token
 
 router = APIRouter()
 settings = get_settings()

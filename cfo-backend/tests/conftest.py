@@ -1,16 +1,18 @@
 import os
 import socket
-import pytest
+from datetime import UTC, datetime
 from uuid import uuid4
-from datetime import datetime, timezone
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+from app.core.security import hash_password
 from app.database import Base, get_db
 from app.main import app
-from app.models.user import User
 from app.models.company import Company, CompanyMember
-from app.core.security import hash_password
+from app.models.user import User
 from app.services.auth import create_access_token
 
 TEST_DATABASE_URL = os.environ.get(
@@ -121,7 +123,7 @@ async def _setup_company_and_user(db_session):
         user_id=str(user_id),
         role="OWNER",
         status="active",
-        joined_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        joined_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
     db_session.add_all([user, company, member])
     await db_session.flush()

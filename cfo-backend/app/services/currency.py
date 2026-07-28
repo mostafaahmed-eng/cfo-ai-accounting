@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -44,7 +44,9 @@ async def fetch_live_exchange_rate(
         if payload.get("result") != "success":
             raise LiveExchangeRateError("FX provider returned an unsuccessful result")
         if payload.get("base_code") != quote_currency:
-            raise LiveExchangeRateError("FX provider returned an unexpected base currency")
+            raise LiveExchangeRateError(
+                "FX provider returned an unexpected base currency"
+            )
         raw_rate = payload.get("rates", {}).get(base_currency)
         if raw_rate is None:
             raise LiveExchangeRateError(
@@ -108,7 +110,7 @@ async def get_exchange_rate(
         if exact_rate:
             return Decimal(str(exact_rate.rate))
 
-        age_days = (datetime.now(timezone.utc).date() - on_date).days
+        age_days = (datetime.now(UTC).date() - on_date).days
         settings = get_settings()
         if 0 <= age_days <= settings.FX_AUTO_FETCH_MAX_AGE_DAYS:
             try:

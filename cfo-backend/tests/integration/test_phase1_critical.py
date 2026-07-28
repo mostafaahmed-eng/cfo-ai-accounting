@@ -1,6 +1,7 @@
-import pytest
+from datetime import UTC, datetime
 from uuid import uuid4
-from datetime import datetime, timezone
+
+import pytest
 from sqlalchemy import select
 
 
@@ -20,14 +21,14 @@ class TestJournalAccountValidation:
             type="expense",
             amount=100,
             currency="USD",
-            transaction_date=datetime.now(timezone.utc).date(),
+            transaction_date=datetime.now(UTC).date(),
             description="Test expense",
             category_account_id=None,
             payment_account_id=None,
             status="ready_for_review",
         )
 
-        from app.services.journal import create_journal_entry_from_draft, JournalError
+        from app.services.journal import JournalError, create_journal_entry_from_draft
 
         with pytest.raises(JournalError, match="Category account is required"):
             await create_journal_entry_from_draft(db_session, draft)
@@ -35,8 +36,8 @@ class TestJournalAccountValidation:
     async def test_journal_posting_rejects_missing_payment_account(
         self, db_session, client, _setup_company_and_user
     ):
-        from app.models.draft_transaction import DraftTransaction
         from app.models.account import Account
+        from app.models.draft_transaction import DraftTransaction
 
         company_id, user_id, headers = _setup_company_and_user
 
@@ -58,14 +59,14 @@ class TestJournalAccountValidation:
             type="expense",
             amount=100,
             currency="USD",
-            transaction_date=datetime.now(timezone.utc).date(),
+            transaction_date=datetime.now(UTC).date(),
             description="Test expense",
             category_account_id=expense_account.id,
             payment_account_id=None,
             status="ready_for_review",
         )
 
-        from app.services.journal import create_journal_entry_from_draft, JournalError
+        from app.services.journal import JournalError, create_journal_entry_from_draft
 
         with pytest.raises(JournalError, match="Payment account is required"):
             await create_journal_entry_from_draft(db_session, draft)
@@ -73,8 +74,8 @@ class TestJournalAccountValidation:
     async def test_journal_posting_rejects_foreign_account(
         self, db_session, client, _setup_company_and_user
     ):
-        from app.models.draft_transaction import DraftTransaction
         from app.models.account import Account
+        from app.models.draft_transaction import DraftTransaction
 
         company_id, user_id, headers = _setup_company_and_user
 
@@ -98,14 +99,14 @@ class TestJournalAccountValidation:
             type="expense",
             amount=100,
             currency="USD",
-            transaction_date=datetime.now(timezone.utc).date(),
+            transaction_date=datetime.now(UTC).date(),
             description="Test expense",
             category_account_id=category_account.id,
             payment_account_id=foreign_account_id,
             status="ready_for_review",
         )
 
-        from app.services.journal import create_journal_entry_from_draft, JournalError
+        from app.services.journal import JournalError, create_journal_entry_from_draft
 
         with pytest.raises(JournalError, match="not found or not active"):
             await create_journal_entry_from_draft(db_session, draft)
@@ -113,8 +114,8 @@ class TestJournalAccountValidation:
     async def test_journal_posting_succeeds_with_valid_company_accounts(
         self, db_session, client, _setup_company_and_user
     ):
-        from app.models.draft_transaction import DraftTransaction
         from app.models.account import Account
+        from app.models.draft_transaction import DraftTransaction
 
         company_id, user_id, headers = _setup_company_and_user
 
@@ -145,7 +146,7 @@ class TestJournalAccountValidation:
             type="expense",
             amount=250,
             currency="USD",
-            transaction_date=datetime.now(timezone.utc).date(),
+            transaction_date=datetime.now(UTC).date(),
             description="Valid expense",
             category_account_id=expense_account.id,
             payment_account_id=payment_account.id,
@@ -164,8 +165,8 @@ class TestJournalAccountValidation:
     async def test_journal_entry_is_balanced(
         self, db_session, client, _setup_company_and_user
     ):
-        from app.models.draft_transaction import DraftTransaction
         from app.models.account import Account
+        from app.models.draft_transaction import DraftTransaction
         from app.models.journal import JournalLine
 
         company_id, user_id, headers = _setup_company_and_user
@@ -197,7 +198,7 @@ class TestJournalAccountValidation:
             type="expense",
             amount=500,
             currency="USD",
-            transaction_date=datetime.now(timezone.utc).date(),
+            transaction_date=datetime.now(UTC).date(),
             description="Balance test",
             category_account_id=expense_account.id,
             payment_account_id=payment_account.id,
@@ -223,9 +224,9 @@ class TestJournalAccountValidation:
     async def test_journal_accounts_belong_to_same_company(
         self, db_session, client, _setup_company_and_user
     ):
-        from app.models.draft_transaction import DraftTransaction
         from app.models.account import Account
         from app.models.company import Company
+        from app.models.draft_transaction import DraftTransaction
 
         company_id, user_id, headers = _setup_company_and_user
 
@@ -267,7 +268,7 @@ class TestJournalAccountValidation:
             type="expense",
             amount=100,
             currency="USD",
-            transaction_date=datetime.now(timezone.utc).date(),
+            transaction_date=datetime.now(UTC).date(),
             description="Cross-company test",
             category_account_id=expense_account.id,
             payment_account_id=payment_account.id,
@@ -276,7 +277,7 @@ class TestJournalAccountValidation:
         db_session.add(draft)
         await db_session.flush()
 
-        from app.services.journal import create_journal_entry_from_draft, JournalError
+        from app.services.journal import JournalError, create_journal_entry_from_draft
 
         with pytest.raises(JournalError, match="not found or not active"):
             await create_journal_entry_from_draft(db_session, draft)
@@ -286,20 +287,28 @@ class TestTelegramCallbackTenantIsolation:
     pytestmark = pytest.mark.asyncio
 
     async def test_callback_rejects_draft_from_other_company(
-        self, db_session, client, _setup_company_and_user
+        self, db_session, client, _setup_company_and_user, monkeypatch
     ):
-        from app.models.telegram import TelegramConnection
-        from app.models.draft_transaction import DraftTransaction
+        from app.api.v1 import telegram as telegram_api
         from app.models.company import Company
+        from app.models.draft_transaction import DraftTransaction
+        from app.models.telegram import TelegramConnection
 
-        company_id, user_id, headers = _setup_company_and_user
+        monkeypatch.setattr(
+            telegram_api.answer_telegram_callback, "delay", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            telegram_api.send_telegram_response, "delay", lambda *a, **kw: None
+        )
+
+        company_id, _user_id, _headers = _setup_company_and_user
 
         conn = TelegramConnection(
             id=uuid4(),
             company_id=company_id,
             bot_username="testbot",
             telegram_chat_id=12345,
-            connected_by=user_id,
+            connected_by=_user_id,
             status="active",
         )
         db_session.add(conn)
@@ -322,7 +331,7 @@ class TestTelegramCallbackTenantIsolation:
             type="expense",
             amount=100,
             currency="USD",
-            transaction_date=datetime.now(timezone.utc).date(),
+            transaction_date=datetime.now(UTC).date(),
             description="Other company draft",
             status="ready_for_review",
         )
@@ -350,8 +359,17 @@ class TestTelegramCallbackTenantIsolation:
         assert draft.status == "ready_for_review"
 
     async def test_callback_rejects_unauthenticated_chat(
-        self, db_session, client, _setup_company_and_user
+        self, db_session, client, _setup_company_and_user, monkeypatch
     ):
+        from app.api.v1 import telegram as telegram_api
+
+        monkeypatch.setattr(
+            telegram_api.answer_telegram_callback, "delay", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            telegram_api.send_telegram_response, "delay", lambda *a, **kw: None
+        )
+
         callback_query = {
             "id": "cb_456",
             "data": "approve:some-id",
@@ -391,7 +409,7 @@ class TestInvitationFlow:
         assert inv is not None
         assert inv.email == "new@example.com"
         assert len(inv.token_hash) == 64
-        assert inv.expires_at > datetime.now(timezone.utc).replace(tzinfo=None)
+        assert inv.expires_at > datetime.now(UTC).replace(tzinfo=None)
 
     async def test_duplicate_pending_invitation_rejected(
         self, db_session, client, _setup_company_and_user
@@ -436,8 +454,8 @@ class TestAuditLogging:
     ):
         company_id, user_id, headers = _setup_company_and_user
 
-        from app.models.user import User
         from app.core.security import hash_password
+        from app.models.user import User
 
         user_result = await db_session.execute(select(User).where(User.id == user_id))
         user = user_result.scalar_one()
@@ -461,8 +479,8 @@ class TestAuditLogging:
     async def test_draft_approval_creates_audit_log(
         self, db_session, client, _setup_company_and_user
     ):
-        from app.models.draft_transaction import DraftTransaction
         from app.models.account import Account
+        from app.models.draft_transaction import DraftTransaction
 
         company_id, user_id, headers = _setup_company_and_user
 
@@ -493,7 +511,7 @@ class TestAuditLogging:
             type="expense",
             amount=75,
             currency="USD",
-            transaction_date=datetime.now(timezone.utc).date(),
+            transaction_date=datetime.now(UTC).date(),
             description="Audit test",
             category_account_id=expense_account.id,
             payment_account_id=payment_account.id,

@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -34,7 +34,7 @@ def _draft(company_id, transaction_type: str, amount: float, currency: str):
         amount=amount,
         tax_amount=0,
         currency=currency,
-        transaction_date=datetime.now(timezone.utc).date(),
+        transaction_date=datetime.now(UTC).date(),
         description=f"{currency} {transaction_type}",
         status="ready_for_review",
     )
@@ -143,9 +143,7 @@ async def test_current_rate_is_fetched_stored_and_reused(
         assert quote_currency == "EUR"
         return Decimal("1.23456789")
 
-    monkeypatch.setattr(
-        "app.services.currency.fetch_live_exchange_rate", fake_fetch
-    )
+    monkeypatch.setattr("app.services.currency.fetch_live_exchange_rate", fake_fetch)
     db_session.add_all([expense, cash, first_draft, second_draft])
     await db_session.flush()
 
@@ -169,7 +167,7 @@ async def test_current_rate_is_fetched_stored_and_reused(
     ).scalar_one()
     assert float(stored_rate.rate) == pytest.approx(1.23456789)
     assert stored_rate.source == "open.er-api.com"
-    assert stored_rate.created_at.date() == datetime.now(timezone.utc).date()
+    assert stored_rate.created_at.date() == datetime.now(UTC).date()
 
     entries = (
         (
@@ -188,16 +186,13 @@ async def test_current_rate_is_fetched_stored_and_reused(
     )
     assert len(entries) == 2
     assert all(
-        float(entry.exchange_rate) == pytest.approx(1.23456789)
-        for entry in entries
+        float(entry.exchange_rate) == pytest.approx(1.23456789) for entry in entries
     )
 
     first_lines = (
         (
             await db_session.execute(
-                select(JournalLine).where(
-                    JournalLine.journal_entry_id == entries[0].id
-                )
+                select(JournalLine).where(JournalLine.journal_entry_id == entries[0].id)
             )
         )
         .scalars()
@@ -223,9 +218,7 @@ async def test_live_rate_provider_failure_requires_manual_rate(
     async def failing_fetch(base_currency: str, quote_currency: str):
         raise LiveExchangeRateError("provider timeout")
 
-    monkeypatch.setattr(
-        "app.services.currency.fetch_live_exchange_rate", failing_fetch
-    )
+    monkeypatch.setattr("app.services.currency.fetch_live_exchange_rate", failing_fetch)
     db_session.add_all([expense, cash, draft])
     await db_session.flush()
 
@@ -380,7 +373,7 @@ async def test_report_date_filters_and_default_period_are_backward_compatible(
     income = _draft(company_id, "income", 1000, "USD")
     early_expense = _draft(company_id, "expense", 100, "USD")
     late_expense = _draft(company_id, "expense", 50, "USD")
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     income.transaction_date = today.replace(day=5)
     early_expense.transaction_date = today.replace(day=15)
     late_expense.transaction_date = today.replace(day=25)
@@ -459,10 +452,7 @@ async def test_report_date_filters_and_default_period_are_backward_compatible(
         explicit_data = explicit_response.json()
         if endpoint == "dashboard":
             assert default_data["monthly_income"] == explicit_data["monthly_income"]
-            assert (
-                default_data["monthly_expenses"]
-                == explicit_data["monthly_expenses"]
-            )
+            assert default_data["monthly_expenses"] == explicit_data["monthly_expenses"]
             assert default_data["net_cash_flow"] == explicit_data["net_cash_flow"]
         elif endpoint == "profit-and-loss":
             assert default_data["net_income"] == explicit_data["net_income"]
@@ -491,7 +481,7 @@ async def test_balance_sheet_as_of_excludes_later_entries(
     cash = _account(company_id, "ASOF-CASH", "asset", payment=True)
     income = _draft(company_id, "income", 1000, "USD")
     expense_draft = _draft(company_id, "expense", 250, "USD")
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     income.transaction_date = today.replace(day=5)
     expense_draft.transaction_date = today.replace(day=20)
     db_session.add_all([revenue, expense, cash, income, expense_draft])

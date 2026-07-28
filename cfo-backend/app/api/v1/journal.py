@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
+from app.dependencies import get_current_company_id, get_current_user
 from app.models.journal import JournalEntry
 from app.models.user import User
 from app.schemas.journal import JournalEntryResponse
-from app.dependencies import get_current_user, get_current_company_id
 
 router = APIRouter()
 

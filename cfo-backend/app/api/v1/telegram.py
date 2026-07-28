@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,8 @@ from app.models.draft_transaction import DraftTransaction
 from app.models.inbox_item import InboxItem
 from app.models.telegram import TelegramConnection, TelegramUpdate
 from app.models.user import User
+from app.models.vendor import Vendor
+from app.schemas.draft_transaction import DraftTransactionUpdate
 from app.schemas.telegram import TelegramStatusResponse
 from app.services.audit import create_audit_log
 from app.services.document_intake import (
@@ -27,7 +30,15 @@ from app.services.document_processing import (
     DocumentValidationError,
     validate_content,
 )
-from app.services.intake import create_text_inbox, normalized_text_hash
+from app.services.draft_editing import DraftEditActor, edit_draft
+from app.services.intake import create_text_inbox
+from app.services.telegram_draft_review import draft_review_message
+from app.services.telegram_edit_state import (
+    TelegramEditState,
+    clear_edit_state,
+    get_edit_state,
+    set_edit_state,
+)
 from app.services.telegram_pairing import consume_pairing
 from app.tasks.ai_extraction import run_ai_extraction
 from app.tasks.receipt_processing import process_receipt
@@ -39,6 +50,24 @@ from app.tasks.telegram_responses import (
 
 router = APIRouter()
 settings = get_settings()
+TELEGRAM_EDIT_FIELDS = {
+    "vendor",
+    "amount",
+    "currency",
+    "date",
+    "description",
+    "reference",
+    "type",
+}
+TELEGRAM_EDIT_PROMPTS = {
+    "vendor": "Send the exact name of an existing active vendor, or 'none' to clear it.",
+    "amount": "Send the corrected positive amount, for example: 125.50",
+    "currency": "Send a three-letter currency code, for example: EGP, USD, EUR, or SAR.",
+    "date": "Send the corrected date as YYYY-MM-DD.",
+    "description": "Send the corrected description.",
+    "reference": "Send the corrected invoice/reference number, or 'none' to clear it.",
+    "type": "Send one of: expense, income, transfer.",
+}
 
 
 def _verify_webhook_secret(request: Request) -> None:
@@ -68,6 +97,62 @@ def _sanitized_update_payload(body: dict) -> dict:
         if isinstance(text, str) and text.startswith("/start"):
             message["text"] = "/start [REDACTED]"
     return sanitized
+
+
+async def _vendor_name(db: AsyncSession, draft: DraftTransaction) -> str | None:
+    if not draft.vendor_id:
+        return None
+    result = await db.execute(
+        select(Vendor.name).where(
+            Vendor.id == draft.vendor_id,
+            Vendor.company_id == draft.company_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _telegram_edit_patch(
+    db: AsyncSession,
+    *,
+    company_id,
+    field: str,
+    text: str,
+) -> DraftTransactionUpdate:
+    value = text.strip()
+    if field == "vendor":
+        if value.casefold() in {"none", "clear", "بدون", "لا يوجد"}:
+            return DraftTransactionUpdate(vendor_id=None)
+        normalized = " ".join(value.casefold().split())
+        result = await db.execute(
+            select(Vendor.id).where(
+                Vendor.company_id == company_id,
+                Vendor.normalized_name == normalized,
+                Vendor.is_active,
+            )
+        )
+        vendor_id = result.scalar_one_or_none()
+        if vendor_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="No active vendor with that exact name was found",
+            )
+        return DraftTransactionUpdate(vendor_id=vendor_id)
+    if field == "reference" and value.casefold() in {
+        "none",
+        "clear",
+        "بدون",
+        "لا يوجد",
+    }:
+        return DraftTransactionUpdate(reference_number=None)
+    field_map = {
+        "amount": "amount",
+        "currency": "currency",
+        "date": "transaction_date",
+        "description": "description",
+        "reference": "reference_number",
+        "type": "type",
+    }
+    return DraftTransactionUpdate.model_validate({field_map[field]: value})
 
 
 @router.post("/webhook")
@@ -194,47 +279,68 @@ async def telegram_webhook(
         return {"status": "ok"}
 
     if text:
-        correction_result = await db.execute(
-            select(DraftTransaction, InboxItem)
-            .join(InboxItem, InboxItem.id == DraftTransaction.inbox_item_id)
-            .join(TelegramUpdate, TelegramUpdate.inbox_item_id == InboxItem.id)
-            .where(
-                DraftTransaction.company_id == connection.company_id,
-                DraftTransaction.status == "needs_clarification",
-                InboxItem.source == "telegram",
-                TelegramUpdate.chat_id == chat_id,
-                TelegramUpdate.update_type == "callback",
-            )
-            .order_by(TelegramUpdate.created_at.desc())
+        edit_state = await get_edit_state(
+            connection_id=str(connection.id),
+            company_id=str(connection.company_id),
+            chat_id=chat_id,
         )
-        correction = correction_result.first()
-        if correction:
-            draft, item = correction
-            item.original_text = text
-            item.detected_language = detect_language(text)
-            item.content_hash = normalized_text_hash(text)
-            item.status = "queued"
-            item.error_code = None
-            item.error_message = None
+        if edit_state:
             update = TelegramUpdate(
                 id=uuid4(),
                 connection_id=str(connection.id),
                 telegram_update_id=update_id,
                 message_id=message.get("message_id"),
                 chat_id=chat_id,
-                update_type="correction",
+                update_type="draft_edit",
                 payload=body,
-                processing_status="dispatched",
-                inbox_item_id=str(item.id),
+                processing_status="received",
             )
             db.add(update)
             await db.flush()
-            await db.commit()
-            send_telegram_response.delay(
-                chat_id, "Thanks — re-checking the corrected details now."
+            try:
+                patch = await _telegram_edit_patch(
+                    db,
+                    company_id=connection.company_id,
+                    field=edit_state.field,
+                    text=text,
+                )
+                draft = await edit_draft(
+                    db,
+                    company_id=connection.company_id,
+                    draft_id=edit_state.draft_id,
+                    updates=patch,
+                    actor=DraftEditActor(
+                        source="telegram",
+                        actor_type="telegram",
+                        telegram_chat_id=chat_id,
+                    ),
+                )
+            except (HTTPException, ValidationError) as exc:
+                detail = (
+                    exc.detail
+                    if isinstance(exc, HTTPException)
+                    else exc.errors()[0]["msg"]
+                )
+                update.processing_status = "validation_failed"
+                await db.flush()
+                send_telegram_response.delay(
+                    chat_id,
+                    f"That value is invalid: {detail}. "
+                    f"{TELEGRAM_EDIT_PROMPTS[edit_state.field]}",
+                )
+                return {"status": "edit_validation_failed"}
+            await clear_edit_state(
+                connection_id=str(connection.id),
+                company_id=str(connection.company_id),
+                chat_id=chat_id,
             )
-            run_ai_extraction.delay(str(item.id))
-            return {"status": "correction_dispatched"}
+            update.inbox_item_id = draft.inbox_item_id
+            update.processing_status = "processed"
+            message_text, markup = draft_review_message(
+                draft, await _vendor_name(db, draft)
+            )
+            send_telegram_response.delay(chat_id, message_text, markup)
+            return {"status": "draft_updated"}
 
     update = TelegramUpdate(
         id=uuid4(),
@@ -416,6 +522,11 @@ async def _handle_callback_query(
         )
         draft = result.scalar_one_or_none()
         if draft and draft.status == "needs_clarification":
+            await clear_edit_state(
+                connection_id=str(connection.id),
+                company_id=str(company_id),
+                chat_id=chat_id,
+            )
             if callback_update is not None:
                 callback_update.inbox_item_id = draft.inbox_item_id
             draft.status = "ready_for_review"
@@ -446,6 +557,93 @@ async def _handle_callback_query(
                 status="denied",
             )
 
+    elif data.startswith("edit_cancel:"):
+        draft_id = data.split(":", 1)[1]
+        await clear_edit_state(
+            connection_id=str(connection.id),
+            company_id=str(company_id),
+            chat_id=chat_id,
+        )
+        result = await db.execute(
+            select(DraftTransaction).where(
+                DraftTransaction.id == draft_id,
+                DraftTransaction.company_id == company_id,
+            )
+        )
+        draft = result.scalar_one_or_none()
+        if draft:
+            message_text, markup = draft_review_message(
+                draft, await _vendor_name(db, draft)
+            )
+            send_telegram_edit.delay(chat_id, message_id, message_text, markup)
+            callback_status = "succeeded"
+        else:
+            send_telegram_response.delay(chat_id, "Draft not found.")
+            callback_status = "denied"
+        await _audit_callback(
+            db,
+            connection=connection,
+            action="edit_cancel",
+            target_type="draft_transaction",
+            target_id=draft_id,
+            status=callback_status,
+        )
+
+    elif data.startswith("edit:"):
+        parts = data.split(":", 2)
+        field = parts[1] if len(parts) == 3 else ""
+        draft_id = parts[2] if len(parts) == 3 else ""
+        result = await db.execute(
+            select(DraftTransaction).where(
+                DraftTransaction.id == draft_id,
+                DraftTransaction.company_id == company_id,
+            )
+        )
+        draft = result.scalar_one_or_none()
+        if (
+            field in TELEGRAM_EDIT_FIELDS
+            and draft
+            and draft.status in {"draft", "needs_clarification", "ready_for_review"}
+        ):
+            await set_edit_state(
+                TelegramEditState(
+                    connection_id=str(connection.id),
+                    company_id=str(company_id),
+                    chat_id=chat_id,
+                    draft_id=str(draft.id),
+                    field=field,
+                )
+            )
+            send_telegram_edit.delay(
+                chat_id,
+                message_id,
+                TELEGRAM_EDIT_PROMPTS[field],
+                {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "Cancel edit",
+                                "callback_data": f"edit_cancel:{draft.id}",
+                            }
+                        ]
+                    ]
+                },
+            )
+            callback_status = "succeeded"
+        else:
+            send_telegram_response.delay(
+                chat_id, "This draft or field is no longer editable."
+            )
+            callback_status = "denied"
+        await _audit_callback(
+            db,
+            connection=connection,
+            action=f"edit_{field or 'invalid'}",
+            target_type="draft_transaction",
+            target_id=draft_id or "invalid",
+            status=callback_status,
+        )
+
     elif data.startswith("correct:"):
         draft_id = data.split(":", 1)[1]
         result = await db.execute(
@@ -458,12 +656,14 @@ async def _handle_callback_query(
         if draft and draft.status in ("needs_clarification", "ready_for_review"):
             if callback_update is not None:
                 callback_update.inbox_item_id = draft.inbox_item_id
-            draft.status = "needs_clarification"
-            await db.flush()
+            message_text, markup = draft_review_message(
+                draft, await _vendor_name(db, draft)
+            )
             send_telegram_edit.delay(
                 chat_id,
                 message_id,
-                "No problem — just send me the corrected details as a message.",
+                message_text,
+                markup,
             )
             await _audit_callback(
                 db,
@@ -499,34 +699,6 @@ async def _handle_callback_query(
             target_type="draft_transaction",
             target_id=draft_id,
             status="denied",
-        )
-
-    elif data.startswith("edit:"):
-        draft_id = data.split(":", 1)[1]
-        result = await db.execute(
-            select(DraftTransaction).where(
-                DraftTransaction.id == draft_id,
-                DraftTransaction.company_id == company_id,
-            )
-        )
-        draft = result.scalar_one_or_none()
-        if draft:
-            send_telegram_response.delay(
-                chat_id,
-                f"To edit draft {draft_id[:8]}..., please use the web dashboard.\n"
-                f"Or send a correction message describing what should change.",
-            )
-            callback_status = "succeeded"
-        else:
-            send_telegram_response.delay(chat_id, "Draft not found.")
-            callback_status = "denied"
-        await _audit_callback(
-            db,
-            connection=connection,
-            action="edit",
-            target_type="draft_transaction",
-            target_id=draft_id,
-            status=callback_status,
         )
 
     elif data.startswith("extract:"):

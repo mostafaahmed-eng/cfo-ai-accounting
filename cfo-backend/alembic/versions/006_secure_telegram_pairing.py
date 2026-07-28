@@ -80,9 +80,7 @@ def downgrade() -> None:
     )
     op.drop_index("ix_telegram_pairings_secret_hash", table_name="telegram_pairings")
     op.drop_table("telegram_pairings")
-    op.execute(
-        "DELETE FROM telegram_connections WHERE telegram_chat_id IS NULL"
-    )
+    op.execute("DELETE FROM telegram_connections WHERE telegram_chat_id IS NULL")
     op.alter_column(
         "telegram_connections",
         "telegram_chat_id",

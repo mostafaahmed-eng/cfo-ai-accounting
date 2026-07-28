@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.text_processing import detect_language
 from app.database import get_db
+from app.dependencies import get_current_company_id, get_current_user
 from app.models.inbox_item import InboxItem
 from app.models.user import User
-from app.schemas.inbox_item import TextInput, InboxItemResponse
-from app.dependencies import get_current_user, get_current_company_id
-from app.core.text_processing import detect_language
+from app.schemas.inbox_item import InboxItemResponse, TextInput
 from app.services.intake import create_text_inbox
 from app.tasks.ai_extraction import run_ai_extraction
 

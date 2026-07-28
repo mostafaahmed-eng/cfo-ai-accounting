@@ -1,14 +1,15 @@
 from sqlalchemy import (
     Column,
-    String,
-    ForeignKey,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
+    String,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.models.base import BaseModel, TimestampMixin
 
 

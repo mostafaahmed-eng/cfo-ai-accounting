@@ -1,12 +1,14 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime, timezone
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
+from app.dependencies import get_current_company_id, get_current_user
 from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.notification import NotificationResponse
-from app.dependencies import get_current_user, get_current_company_id
 
 router = APIRouter()
 
@@ -44,6 +46,6 @@ async def mark_read(
     notification = result.scalar_one_or_none()
     if notification:
         notification.status = "read"
-        notification.read_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        notification.read_at = datetime.now(UTC).replace(tzinfo=None)
         await db.flush()
     return {"message": "Marked as read"}

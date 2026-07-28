@@ -1,26 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from datetime import datetime, timezone, timedelta
-from uuid import uuid4, UUID
-import secrets
 import hashlib
+import secrets
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
-from app.models.user import User
-from app.models.company import Company, CompanyMember
+from app.dependencies import get_current_company_membership, get_current_user
+from app.enums import AccountType, UserRole
 from app.models.account import Account
+from app.models.company import Company, CompanyMember
 from app.models.invitation import Invitation
+from app.models.user import User
 from app.schemas.company import (
     CompanyCreate,
     CompanyMembershipResponse,
     CompanyResponse,
     InvitationCreate,
     InvitationResponse,
-    MemberUpdate,
     MemberResponse,
+    MemberUpdate,
 )
-from app.dependencies import get_current_company_membership, get_current_user
-from app.enums import UserRole, AccountType
 from app.services.audit import create_audit_log
 from app.services.company_authorization import (
     authorize_member_update,
@@ -137,7 +139,7 @@ async def create_company(
         user_id=str(user.id),
         role=UserRole.OWNER.value,
         status="active",
-        joined_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        joined_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
     db.add(member)
     await db.flush()
@@ -220,7 +222,7 @@ async def invite_member(
         token_hash=token_hash,
         invited_by=user.id,
         status="pending",
-        expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7),
+        expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7),
     )
     db.add(invitation)
     await db.flush()
@@ -242,7 +244,7 @@ async def invite_member(
         email=invitation.email,
         role=data.role,
         status="pending",
-        joined_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        joined_at=datetime.now(UTC).replace(tzinfo=None),
     )
 
 

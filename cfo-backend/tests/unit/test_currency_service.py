@@ -19,9 +19,7 @@ async def test_live_provider_rate_uses_project_conversion_convention():
             },
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         rate = await fetch_live_exchange_rate("EGP", "USD", client=client)
 
     assert rate == Decimal("51.32571")
@@ -42,8 +40,6 @@ async def test_live_provider_errors_are_normalized(response):
     async def handler(request: httpx.Request) -> httpx.Response:
         return response
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(LiveExchangeRateError):
             await fetch_live_exchange_rate("EGP", "USD", client=client)

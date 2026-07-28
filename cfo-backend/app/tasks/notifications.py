@@ -1,11 +1,13 @@
 import asyncio
 import logging
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from app.tasks.celery_app import celery_app
+
 from app.config import get_settings
 from app.models.notification import Notification
 from app.models.telegram import TelegramConnection
+from app.tasks.celery_app import celery_app
 from app.tasks.telegram_responses import send_telegram_response
 
 logger = logging.getLogger(__name__)

@@ -1,9 +1,8 @@
-from datetime import datetime, timezone
+import asyncio
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-import asyncio
-
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,7 +55,7 @@ def _membership(user, company, role, membership_status="active"):
         company_id=company.id,
         role=role,
         status=membership_status,
-        joined_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        joined_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
 

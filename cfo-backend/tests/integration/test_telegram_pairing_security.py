@@ -1,6 +1,6 @@
 import io
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -391,9 +391,9 @@ async def test_expired_pairing_code_is_rejected(
         select(TelegramPairing).where(TelegramPairing.company_id == company_id)
     )
     pairing_row = result.scalar_one()
-    pairing_row.expires_at = datetime.now(timezone.utc).replace(
-        tzinfo=None
-    ) - timedelta(seconds=1)
+    pairing_row.expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+        seconds=1
+    )
     await db_session.flush()
 
     response = await client.post(
@@ -672,7 +672,7 @@ async def test_legacy_approval_callback_is_denied_and_audited(
         type="expense",
         amount=10,
         currency="USD",
-        transaction_date=datetime.now(timezone.utc).date(),
+        transaction_date=datetime.now(UTC).date(),
         description="Approve me",
         category_account_id=expense_account.id,
         payment_account_id=payment_account.id,
@@ -719,7 +719,7 @@ async def test_legacy_reject_callback_is_denied_and_audited(
         type="expense",
         amount=10,
         currency="USD",
-        transaction_date=datetime.now(timezone.utc).date(),
+        transaction_date=datetime.now(UTC).date(),
         description="Reject me",
         status="ready_for_review",
     )
@@ -765,7 +765,7 @@ async def test_confirm_callback_marks_ready_without_posting_and_deduplicates(
         type="expense",
         amount=10,
         currency="USD",
-        transaction_date=datetime.now(timezone.utc).date(),
+        transaction_date=datetime.now(UTC).date(),
         description="Confirm me",
         status="needs_clarification",
     )
@@ -812,10 +812,11 @@ async def test_confirm_callback_marks_ready_without_posting_and_deduplicates(
 
 
 @pytest.mark.asyncio
-async def test_correction_reuses_inbox_item_and_dispatches_extraction(
+async def test_field_edit_updates_existing_draft_without_rerunning_extraction(
     client, db_session, _setup_company_and_user, monkeypatch
 ):
     from app.models.draft_transaction import DraftTransaction
+    from app.services.telegram_edit_state import TelegramEditState
 
     company_id, user_id, _ = _setup_company_and_user
     connection = TelegramConnection(
@@ -844,7 +845,7 @@ async def test_correction_reuses_inbox_item_and_dispatches_extraction(
         type="expense",
         amount=10,
         currency="USD",
-        transaction_date=datetime.now(timezone.utc).date(),
+        transaction_date=datetime.now(UTC).date(),
         description="Needs correction",
         status="ready_for_review",
     )
@@ -861,6 +862,33 @@ async def test_correction_reuses_inbox_item_and_dispatches_extraction(
     )
     db_session.add_all([connection, item, draft, original_update])
     await db_session.flush()
+    state = None
+
+    async def fake_set(next_state):
+        nonlocal state
+        state = next_state
+
+    async def fake_get(**scope):
+        if state and (
+            state.connection_id == scope["connection_id"]
+            and state.company_id == scope["company_id"]
+            and state.chat_id == scope["chat_id"]
+        ):
+            return state
+        return None
+
+    async def fake_clear(**scope):
+        nonlocal state
+        if state and (
+            state.connection_id == scope["connection_id"]
+            and state.company_id == scope["company_id"]
+            and state.chat_id == scope["chat_id"]
+        ):
+            state = None
+
+    monkeypatch.setattr(telegram_api, "set_edit_state", fake_set)
+    monkeypatch.setattr(telegram_api, "get_edit_state", fake_get)
+    monkeypatch.setattr(telegram_api, "clear_edit_state", fake_clear)
     dispatched = []
     monkeypatch.setattr(
         telegram_api.run_ai_extraction,
@@ -873,15 +901,17 @@ async def test_correction_reuses_inbox_item_and_dispatches_extraction(
         json={
             "update_id": 30004,
             "callback_query": {
-                "id": "correct-valid",
-                "data": f"correct:{draft.id}",
+                "id": "edit-valid",
+                "data": f"edit:amount:{draft.id}",
                 "message": {"chat": {"id": 920001}, "message_id": 4},
             },
         },
         headers=_webhook_headers(),
     )
     assert correction_request.status_code == 200
-    assert draft.status == "needs_clarification"
+    assert isinstance(state, TelegramEditState)
+    assert state.draft_id == str(draft.id)
+    assert state.field == "amount"
 
     response = await client.post(
         "/api/v1/telegram/webhook",
@@ -890,18 +920,21 @@ async def test_correction_reuses_inbox_item_and_dispatches_extraction(
             "message": {
                 "message_id": 5,
                 "chat": {"id": 920001},
-                "text": "Paid USD 12 for corrected coffee",
+                "text": "12.3456",
             },
         },
         headers=_webhook_headers(),
     )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "correction_dispatched"}
-    assert item.original_text == "Paid USD 12 for corrected coffee"
-    assert item.status == "queued"
-    assert draft.status == "needs_clarification"
-    assert dispatched == [str(item.id)]
+    assert response.json() == {"status": "draft_updated"}
+    await db_session.refresh(draft)
+    assert str(draft.amount) == "12.3456"
+    assert item.original_text == "Wrong details"
+    assert item.status == "review_required"
+    assert draft.status == "ready_for_review"
+    assert dispatched == []
+    assert state is None
     items = (
         (
             await db_session.execute(
@@ -912,6 +945,98 @@ async def test_correction_reuses_inbox_item_and_dispatches_extraction(
         .all()
     )
     assert items == [item]
+
+
+@pytest.mark.asyncio
+async def test_invalid_telegram_edit_stays_recoverable_and_cancel_changes_nothing(
+    client, db_session, _setup_company_and_user, monkeypatch
+):
+    from app.models.draft_transaction import DraftTransaction
+
+    company_id, user_id, _ = _setup_company_and_user
+    connection = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="testbot",
+        telegram_chat_id=920101,
+        connected_by=user_id,
+        status="active",
+    )
+    draft = DraftTransaction(
+        id=uuid4(),
+        company_id=company_id,
+        type="expense",
+        amount=10,
+        currency="USD",
+        transaction_date=datetime.now(UTC).date(),
+        description="Unchanged",
+        status="needs_clarification",
+    )
+    db_session.add_all([connection, draft])
+    await db_session.flush()
+    state = None
+
+    async def fake_set(next_state):
+        nonlocal state
+        state = next_state
+
+    async def fake_get(**scope):
+        return state
+
+    async def fake_clear(**scope):
+        nonlocal state
+        state = None
+
+    monkeypatch.setattr(telegram_api, "set_edit_state", fake_set)
+    monkeypatch.setattr(telegram_api, "get_edit_state", fake_get)
+    monkeypatch.setattr(telegram_api, "clear_edit_state", fake_clear)
+
+    selected = await client.post(
+        "/api/v1/telegram/webhook",
+        json={
+            "update_id": 30101,
+            "callback_query": {
+                "id": "edit-currency",
+                "data": f"edit:currency:{draft.id}",
+                "message": {"chat": {"id": 920101}, "message_id": 8},
+            },
+        },
+        headers=_webhook_headers(),
+    )
+    assert selected.status_code == 200
+
+    invalid = await client.post(
+        "/api/v1/telegram/webhook",
+        json={
+            "update_id": 30102,
+            "message": {
+                "message_id": 9,
+                "chat": {"id": 920101},
+                "text": "not-currency",
+            },
+        },
+        headers=_webhook_headers(),
+    )
+    assert invalid.status_code == 200
+    assert invalid.json() == {"status": "edit_validation_failed"}
+    assert state is not None
+    assert draft.currency == "USD"
+
+    cancelled = await client.post(
+        "/api/v1/telegram/webhook",
+        json={
+            "update_id": 30103,
+            "callback_query": {
+                "id": "edit-cancel",
+                "data": f"edit_cancel:{draft.id}",
+                "message": {"chat": {"id": 920101}, "message_id": 8},
+            },
+        },
+        headers=_webhook_headers(),
+    )
+    assert cancelled.status_code == 200
+    assert state is None
+    assert draft.currency == "USD"
 
 
 @pytest.mark.asyncio

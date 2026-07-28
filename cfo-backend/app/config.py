@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     TELEGRAM_WEBHOOK_SECRET: str = ""
     TELEGRAM_BOT_USERNAME: str = ""
     TELEGRAM_PAIRING_TTL_MINUTES: int = 15
+    TELEGRAM_EDIT_TTL_MINUTES: int = 15
     TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK: bool = False
     ENCRYPTION_KEY: str = ""
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB

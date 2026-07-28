@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -20,6 +20,7 @@ from app.schemas.draft_transaction import (
     DraftTransactionUpdate,
 )
 from app.services.audit import create_audit_log
+from app.services.draft_editing import DraftEditActor, edit_draft
 from app.services.journal import JournalError, create_journal_entry_from_draft
 
 router = APIRouter()
@@ -63,35 +64,22 @@ async def update_draft(
     data: DraftTransactionUpdate,
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
+    membership: CompanyMember = Depends(get_current_company_membership),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(DraftTransaction).where(
-            DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id
-        )
-    )
-    draft = result.scalar_one_or_none()
-    if not draft:
-        raise HTTPException(status_code=404, detail="Draft not found")
-    if draft.status in ("posted", "approved"):
-        raise HTTPException(
-            status_code=400, detail="Cannot edit posted or approved transaction"
-        )
-    before = {"status": draft.status, "amount": float(draft.amount)}
-    for field, value in data.model_dump(exclude_unset=True).items():
-        setattr(draft, field, value)
-    draft.status = "ready_for_review"
-    await db.flush()
-    await create_audit_log(
+    membership_role = getattr(membership.role, "value", membership.role)
+    if membership_role not in ("OWNER", "ADMIN", "ACCOUNTANT"):
+        raise HTTPException(status_code=403, detail="Draft editing role required")
+    draft = await edit_draft(
         db=db,
-        company_id=str(company_id),
-        user_id=str(user.id),
-        actor_type="user",
-        action="draft.updated",
-        entity_type="draft_transaction",
-        entity_id=str(draft.id),
-        before_data=before,
-        after_data={"status": "ready_for_review", "amount": float(draft.amount)},
+        company_id=company_id,
+        draft_id=draft_id,
+        updates=data,
+        actor=DraftEditActor(
+            source="dashboard",
+            actor_type="user",
+            user_id=str(user.id),
+        ),
     )
     return DraftTransactionResponse.model_validate(draft)
 
@@ -120,7 +108,7 @@ async def approve_draft(
 
     draft.status = "approved"
     draft.approved_by = str(user.id)
-    draft.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    draft.approved_at = datetime.now(UTC).replace(tzinfo=None)
     await db.flush()
 
     try:

@@ -1,7 +1,9 @@
-from sqlalchemy import Column, String, Enum as SAEnum
+from sqlalchemy import Column, String
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import relationship
-from app.models.base import BaseModel, TimestampMixin
+
 from app.enums import Language, UserStatus
+from app.models.base import BaseModel, TimestampMixin
 
 
 class User(BaseModel, TimestampMixin):

@@ -1,10 +1,12 @@
 import asyncio
 import logging
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from app.tasks.celery_app import celery_app
+
 from app.config import get_settings
 from app.models.draft_transaction import DraftTransaction
+from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

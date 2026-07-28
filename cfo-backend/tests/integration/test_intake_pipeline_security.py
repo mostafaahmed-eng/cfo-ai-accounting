@@ -10,8 +10,8 @@ from app.models.ai_extraction import AIExtraction
 from app.models.document import Document
 from app.models.draft_transaction import DraftTransaction
 from app.models.inbox_item import InboxItem
-from app.tasks.ai_extraction import _finalize_extraction
 from app.services.intake import create_text_inbox
+from app.tasks.ai_extraction import _finalize_extraction
 
 pytestmark = pytest.mark.asyncio
 

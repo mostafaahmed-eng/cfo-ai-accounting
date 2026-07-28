@@ -1,7 +1,9 @@
-import httpx
 import json
 import time
+
+import httpx
 from pydantic import ValidationError
+
 from app.config import get_settings
 from app.schemas.ai_extraction import ExtractionResult
 

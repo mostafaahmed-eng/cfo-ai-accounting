@@ -1,6 +1,7 @@
-from sqlalchemy import Column, String, ForeignKey, Numeric, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.models.base import BaseModel, TimestampMixin
 
 

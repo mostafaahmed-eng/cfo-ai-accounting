@@ -1,15 +1,16 @@
 from sqlalchemy import (
+    CheckConstraint,
     Column,
-    String,
+    Date,
+    DateTime,
     ForeignKey,
     Numeric,
-    DateTime,
-    Date,
-    CheckConstraint,
+    String,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.models.base import BaseModel, TimestampMixin
 
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -57,7 +57,7 @@ async def test_dashboard_approval_posts_balanced_entry_and_archives_inbox(
         amount=25,
         tax_amount=0,
         currency="USD",
-        transaction_date=datetime.now(timezone.utc).date(),
+        transaction_date=datetime.now(UTC).date(),
         description="Review expense",
         status="ready_for_review",
     )
@@ -122,7 +122,7 @@ async def test_dashboard_reject_archives_linked_inbox(
         amount=10,
         tax_amount=0,
         currency="USD",
-        transaction_date=datetime.now(timezone.utc).date(),
+        transaction_date=datetime.now(UTC).date(),
         description="Reject me",
         status="ready_for_review",
     )

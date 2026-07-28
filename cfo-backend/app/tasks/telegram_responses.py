@@ -1,7 +1,8 @@
 import asyncio
 import logging
-from app.tasks.celery_app import celery_app
+
 from app.core.telegram import telegram_client
+from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
