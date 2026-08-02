@@ -1,231 +1,269 @@
-# Production Deployment Guide
+# Production Deployment Guide — IP-based (no domain, no SSL yet)
 
-## Prerequisites
-- Docker Engine 24+ and Docker Compose v2
-- Git
-- A Linux server (Ubuntu 22.04+ recommended) or cloud VM
-- Domain name with DNS pointed to your server
-- SSL certificate (Let's Encrypt recommended)
+This guide deploys the stack to a VPS reached directly by IP + port over plain HTTP,
+e.g. `http://<VPS_IP>:8080`. HTTPS/Let's Encrypt is intentionally **not** configured yet
+because no domain exists to issue a certificate for. That is a separate future task.
 
-## Quick Start
+The stack uses a **single nginx entrypoint**: one port proxies both the frontend and the
+API. This means no cross-origin issues in the browser and only one port to open in the
+firewall.
 
-### 1. Clone and configure
+---
+
+## Prerequisites (on the server)
+
 ```bash
-git clone <repo-url> && cd cfo-manager
+# Ubuntu 22.04+ recommended
+sudo apt update && sudo apt install -y git curl docker.io docker-compose-v2
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+# Log out and back in so the docker group applies, then continue.
+```
+
+Verify:
+```bash
+docker --version
+docker compose version
+```
+
+---
+
+## Step 1 — Clone the repository
+
+```bash
+git clone https://github.com/Wuzzify-Traniers/ai-cfo-manager.git
+cd ai-cfo-manager
+```
+
+---
+
+## Step 2 — Create the real `.env` file (never committed)
+
+Copy the template and edit it on the server. Values below are placeholders — replace them.
+
+```bash
 cp .env.example .env
-# Edit .env with production values
+nano .env
 ```
 
-### 2. Required secrets in .env
-```bash
-# Generate with: openssl rand -hex 32
-SECRET_KEY=<32-byte-hex>
-# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-# The backend refuses to start in production without a valid Fernet key.
-ENCRYPTION_KEY=<valid-fernet-key-ending-in-equals>
-POSTGRES_PASSWORD=<strong-password>
-# MinIO root credentials (used by both MinIO and the backend's S3 client).
-# Generate with: openssl rand -hex 16
-MINIO_ROOT_USER=<minio-user>
-MINIO_ROOT_PASSWORD=<minio-strong-password>
-# Browser origin(s) allowed to call the API, comma-separated. Must match the
-# frontend URL exactly (e.g. https://yourdomain.com). No wildcard in production.
-CORS_ALLOWED_ORIGINS=https://yourdomain.com
-OPENROUTER_API_KEY=<your-key>
-TELEGRAM_BOT_TOKEN=<your-token>
-TELEGRAM_BOT_USERNAME=<your-bot-username>
-TELEGRAM_WEBHOOK_SECRET=<random-webhook-secret>
-TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK=false
-# Only needed if you generate presigned document download links from outside the
-# server. If left empty, downloads fall back to the internal MinIO endpoint.
-# S3_PUBLIC_ENDPOINT_URL=https://yourdomain.com
-```
+The **required** variables for a working production deployment (backend refuses to boot
+if these are missing/wrong):
 
-The minimum set of variables that will fail deployment if missing:
-`POSTGRES_PASSWORD`, `SECRET_KEY`, `ENCRYPTION_KEY`, `MINIO_ROOT_PASSWORD`,
-`CORS_ALLOWED_ORIGINS`, `OPENROUTER_API_KEY`, `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_WEBHOOK_SECRET`.
+| Variable | Value to use | Generate with |
+|---|---|---|
+| `POSTGRES_PASSWORD` | strong random password | `openssl rand -hex 32` |
+| `SECRET_KEY` | strong random string | `python3 -c "import secrets; print(secrets.token_urlsafe(64))"` |
+| `ENCRYPTION_KEY` | valid Fernet key (must end in `=`) | `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `MINIO_ROOT_USER` | minio admin user | e.g. `minioadmin` (or `openssl rand -hex 8`) |
+| `MINIO_ROOT_PASSWORD` | strong random password | `openssl rand -hex 32` |
+| `CORS_ALLOWED_ORIGINS` | `http://<VPS_IP>:8080` | your server IP — must match the browser origin exactly |
+| `OPENROUTER_API_KEY` | from https://openrouter.ai/keys | optional unless you want AI extraction |
+| `NEXT_PUBLIC_API_BASE_URL` | `http://<VPS_IP>:8080/api/v1` | your server IP — note the `/api/v1` suffix |
+| `TELEGRAM_BOT_TOKEN` | from @BotFather | optional unless you use Telegram |
+| `TELEGRAM_WEBHOOK_SECRET` | random string | `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `TELEGRAM_BOT_USERNAME` | bot username (no `@`) | from @BotFather |
+| `NGINX_PORT` | `8080` | the single public port |
 
-### 3. Deploy
-```bash
-chmod +x scripts/*.sh
-./scripts/deploy.sh production
-```
+> `ENCRYPTION_KEY` and `SECRET_KEY` are unrecoverable if lost — they are **not** stored in
+> the database. Back them up in a password manager before relying on this deployment.
+>
+> `NEXT_PUBLIC_API_BASE_URL` is baked into the frontend **at build time** (Next.js). If you
+> change your IP/port, you must rebuild the frontend (`docker compose ... up --build -d`).
 
-## Architecture
+Everything else in `.env.example` has a working default. For the full inventory of every
+variable and how to obtain it, see `MANUAL_SETUP_CHECKLIST.md`.
 
-```
-Internet → Nginx (80/443) → Frontend (3000)
-                           → Backend API (8000)
-                           → Celery Worker (internal)
-                           → PostgreSQL (internal)
-                           → Redis (internal)
-                           → MinIO (internal, object storage)
-```
+---
 
-MinIO runs on the internal `backend` network only — no public ports. Receipts
-are uploaded by the backend and processed by the Celery worker over that
-network. The `minio-init` one-shot service creates the bucket on first boot.
-To inspect the MinIO console from the server, forward the console port:
-`docker compose -f docker-compose.prod.yml exec minio sh` or use
-`docker compose -f docker-compose.prod.yml run --rm -p 9001:9001 minio server /data --console-address ":9001"`.
-
-## CI/CD Pipelines
-
-### GitHub Actions Workflows
-
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| `tests.yml` | Push/PR to main/develop | Run pytest suite + ruff/mypy lint |
-| `frontend.yml` | Push/PR touching cfo-dashboard/ | Type-check + lint + build frontend |
-| `docker.yml` | Push to main or tags | Build & push Docker images to GHCR |
-| `security.yml` | Push/PR + weekly schedule | Dependency audit, Trivy scan, secret scan |
-| `deploy.yml` | Push to main (staging), tags (production) | SSH deploy with health checks |
-
-### Required GitHub Secrets
-
-**Staging:**
-- `STAGING_SSH_KEY` — SSH private key for staging server
-- `STAGING_HOST` — staging server IP/hostname
-- `STAGING_USER` — SSH username
-
-**Production:**
-- `PRODUCTION_SSH_KEY` — SSH private key for production server
-- `PRODUCTION_HOST` — production server IP/hostname
-- `PRODUCTION_USER` — SSH username
-
-### Required GitHub Environments
-Create `staging` and `production` environments in repo Settings → Environments with deployment protection rules.
-
-## Make Commands
+## Step 3 — Start the stack (first deploy, includes migrations)
 
 ```bash
-make help              # Show all commands
-make dev               # Start development
-make test              # Run tests in Docker
-make test-cov          # Tests with coverage report
-make lint              # Ruff linting
-make typecheck         # MyPy type checking
-make docker-build      # Build production images
-make docker-up         # Start production services
-make deploy-staging    # Deploy to staging
-make deploy-production # Deploy to production
-make rollback          # Rollback to previous version
-make health-check      # Check all services
+docker compose -f docker-compose.prod.yml up --build -d
 ```
 
-## SSL/HTTPS Setup
+This pulls/builds images, starts PostgreSQL + Redis + MinIO, runs the `minio-init`
+one-shot (creates the bucket), then starts backend, celery-worker, frontend, and nginx.
 
-1. Obtain certificate (e.g., Let's Encrypt):
+Run migrations explicitly (the backend also runs them on boot, but do it once explicitly
+to see the output):
+
 ```bash
-certbot certonly --standalone -d yourdomain.com
+docker compose -f docker-compose.prod.yml run --rm backend alembic upgrade head
 ```
 
-2. Place certs in `nginx/ssl/`:
+Restart the backend so it is fully in sync with the migrated schema:
+
 ```bash
-cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem nginx/ssl/
-cp /etc/letsencrypt/live/yourdomain.com/privkey.pem nginx/ssl/
+docker compose -f docker-compose.prod.yml restart backend celery-worker
 ```
 
-3. Uncomment HTTPS block in `nginx/nginx.conf` and update server_name.
+---
 
-4. Restart nginx:
+## Step 4 — Open the firewall
+
+Only these ports need to be reachable:
+
+| Port | Protocol | Purpose | Public? |
+|---|---|---|---|
+| 22 | TCP | SSH (administration) | Yes (or restrict to your IP) |
+| **8080** | TCP | **HTTP — the app (nginx entrypoint)** | **Yes** |
+
+Do **not** open 5432 (Postgres), 6379 (Redis), 9000/9001 (MinIO), 3000 (frontend) or 8000
+(backend) — those services have no published host ports and are only reachable on the
+internal Docker networks.
+
 ```bash
-docker compose -f docker-compose.prod.yml restart nginx
+# ufw example
+sudo ufw allow OpenSSH
+sudo ufw allow 8080/tcp
+sudo ufw enable
+sudo ufw status verbose
 ```
 
-## Telegram Webhook (Production)
+If you are on a cloud provider, also open **8080/tcp** (and 22/tcp) in its Security Group
+/ firewall panel.
 
-The one-command script reads `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and
-`PUBLIC_BASE_URL` from the environment, calls `setWebhook`, then verifies with
-`getWebhookInfo`. It can run on the server or anywhere the token is available:
+---
+
+## Step 5 — Verify it works
 
 ```bash
-# From the repo root, against the running backend container:
-docker compose -f docker-compose.prod.yml exec backend python -m app.scripts.telegram_setup
+# API health
+curl -f http://<VPS_IP>:8080/health
 
-# Or locally, against a reachable public URL:
-PUBLIC_BASE_URL=https://yourdomain.com python -m app.scripts.telegram_setup
+# Frontend (returns the HTML page)
+curl -f -I http://<VPS_IP>:8080/
+
+# API behind nginx
+curl -f http://<VPS_IP>:8080/api/v1/auth/me -H "Authorization: Bearer <token>"
 ```
 
-The webhook URL is `PUBLIC_BASE_URL + /api/v1/telegram/webhook`. The script
-prints a clear success or failure summary (including whether Telegram reports
-`last_error`/pending updates). Equivalent raw curl:
+Expected API health response:
+```json
+{"status":"ok"}
+```
+
+### Create the first admin user (required — there is no registration API)
 
 ```bash
-curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+docker compose -f docker-compose.prod.yml exec backend python -c "
+import asyncio
+from app.database import async_session
+from app.models.user import User
+from app.core.security import hash_password
+from uuid import uuid4
+
+async def create():
+    async with async_session() as s:
+        u = User(id=uuid4(), email='admin@example.com', name='Admin',
+                 password_hash=hash_password('ChangeMe123!'),
+                 language='en', timezone='UTC', status='active')
+        s.add(u)
+        await s.commit()
+        print('User created: admin@example.com')
+
+asyncio.run(create())
+"
+```
+
+Then log in to confirm auth works:
+```bash
+curl -X POST http://<VPS_IP>:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://yourdomain.com/api/v1/telegram/webhook", "secret_token": "<TELEGRAM_WEBHOOK_SECRET>"}'
+  -d '{"email":"admin@example.com","password":"ChangeMe123!"}'
 ```
 
-`TELEGRAM_WEBHOOK_SECRET` is mandatory outside the explicit local-development
-bypass, and the webhook endpoint is rate-limited (`RATE_LIMIT_WEBHOOK`, default
-30/minute per IP) as an extra abuse guard. Keep
-`TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK=false` in staging and production.
-To connect a company, request a pairing link from Telegram Settings and send the
-generated `/start <single-use-code>` command to the configured bot before the code
-expires. Pairing codes are returned once and only their hashes are stored.
+After logging in on the dashboard, create your company — this auto-seeds the default
+chart of accounts.
+
+---
+
+## Step 6 — View logs
+
+```bash
+# All services
+docker compose -f docker-compose.prod.yml logs -f
+
+# A single service (backend, celery-worker, frontend, nginx, postgres, redis, minio)
+docker compose -f docker-compose.prod.yml logs -f backend
+docker compose -f docker-compose.prod.yml logs -f celery-worker
+
+# Service status / health
+docker compose -f docker-compose.prod.yml ps
+```
+
+---
+
+## Step 7 — Redeploy after a code update
+
+```bash
+git pull
+docker compose -f docker-compose.prod.yml up --build -d
+docker compose -f docker-compose.prod.yml ps
+curl -f http://<VPS_IP>:8080/health
+```
+
+If a new migration was added in the update, run it first:
+
+```bash
+git pull
+docker compose -f docker-compose.prod.yml run --rm backend alembic upgrade head
+docker compose -f docker-compose.prod.yml up --build -d
+```
+
+---
+
+## Architecture (IP-based)
+
+```
+Internet ── http://<VPS_IP>:8080 ──► nginx ──► frontend (3000, internal)
+                                └──► backend API (8000, internal)
+                                      ├── celery-worker (internal)
+                                      ├── PostgreSQL (internal)
+                                      ├── Redis (internal)
+                                      └── MinIO (internal object storage)
+```
+
+Only nginx publishes a host port (`NGINX_PORT`, default 8080). Everything else stays on
+the internal `backend`/`frontend` networks. MinIO has no public ports; the `minio-init`
+service creates the bucket on first boot.
+
+---
+
+## Telegram Webhook (optional)
+
+Once you have a public reachable URL, register the webhook with the one-command script
+(runs inside the backend container, reading `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`
+and `PUBLIC_BASE_URL`):
+
+```bash
+docker compose -f docker-compose.prod.yml exec backend python -m app.scripts.telegram_setup
+```
+
+The webhook URL is `PUBLIC_BASE_URL + /api/v1/telegram/webhook`. Keep
+`TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK=false` in production.
+
+> Note: plain HTTP on a bare IP works for manual verification. Telegram requires a public
+> HTTPS webhook URL, so the webhook can only be fully registered once a domain + SSL exist.
+
+---
 
 ## Backup & Restore
 
-Database and object storage are both persisted in named volumes (`pgdata`,
-`redisdata`, `miniodata`). Back up the database daily and the volumes as needed.
-
 ```bash
 # Backup database to a file
-docker compose -f docker-compose.prod.yml exec postgres \
+docker compose -f docker-compose.prod.yml exec -T postgres \
   pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" > backup_$(date +%Y%m%d_%H%M%S).sql
 
-# Restore (drop/recreate as needed)
+# Restore
 docker compose -f docker-compose.prod.yml exec -T postgres \
   psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < backup_20260101_120000.sql
 ```
 
-> `ENCRYPTION_KEY` and `SECRET_KEY` are not recoverable from backups. Store them
-> safely (password manager / secret manager); losing `ENCRYPTION_KEY` makes any
-> encrypted-at-rest values unreadable, and losing `SECRET_KEY` invalidates all
-> issued JWTs.
+Object storage and the database live in named volumes (`pgdata`, `redisdata`,
+`miniodata`). Back up the database daily; copy the SQL dump off the server.
 
-## Firewall
-
-Only expose Nginx. Everything else lives on the internal `backend`/`frontend`
-networks and must not be published.
-
-| Port | Protocol | Purpose | Public? |
-|---|---|---|---|
-| 22 | TCP | SSH (admin) | Optional / VPN-only |
-| 80 | TCP | HTTP → HTTPS redirect | Yes |
-| 443 | TCP | HTTPS | Yes |
-
-```bash
-# ufw example
-ufw allow OpenSSH
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw enable
-```
-
-Do not open 5432 (Postgres), 6379 (Redis), 9000/9001 (MinIO), 3000 (frontend)
-or 8000 (backend) to the public internet.
-
-## Monitoring
-
-- Health endpoint: `GET /health`
-- Run `./scripts/health-check.sh` for full status
-- Check logs: `make docker-logs`
-- Container status: `make docker-ps`
-
-## Rollback
-
-```bash
-# Automatic rollback to previous git version
-./scripts/rollback.sh
-
-# Or manual
-git checkout <previous-tag>
-make docker-build
-make docker-up
-```
+---
 
 ## Troubleshooting
 
@@ -241,8 +279,22 @@ docker compose -f docker-compose.prod.yml logs celery-worker
 docker compose -f docker-compose.prod.yml restart celery-worker
 ```
 
+**Frontend calls the API but gets network/CORS errors:**
+Check that `NEXT_PUBLIC_API_BASE_URL=http://<VPS_IP>:8080/api/v1` and
+`CORS_ALLOWED_ORIGINS=http://<VPS_IP>:8080` match what you type in the browser. If the IP
+changed, rebuild the frontend — the value is baked in at build time.
+
 **Database connection refused:**
 ```bash
 docker compose -f docker-compose.prod.yml exec postgres pg_isready -U postgres
 docker compose -f docker-compose.prod.yml restart postgres
 ```
+
+---
+
+## Next tasks (when you have a domain)
+
+1. Point DNS at the VPS.
+2. Configure HTTPS (Let's Encrypt/certbot or a reverse proxy).
+3. Register the Telegram webhook against the HTTPS URL.
+4. Set `S3_PUBLIC_ENDPOINT_URL` to the public endpoint for presigned download links.
