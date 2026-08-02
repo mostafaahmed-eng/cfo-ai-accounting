@@ -98,3 +98,5 @@ celerybeat.pid
 *.temp
 *.bak
 *.orig
+docker-compose.prod.override.yml
+

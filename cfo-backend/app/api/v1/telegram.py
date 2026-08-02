@@ -13,6 +13,7 @@ from app.core.telegram import TelegramFileError, telegram_client
 from app.core.text_processing import detect_language
 from app.database import get_db
 from app.dependencies import get_current_company_id, get_current_user
+from app.limiter import limiter
 from app.models.draft_transaction import DraftTransaction
 from app.models.inbox_item import InboxItem
 from app.models.telegram import TelegramConnection, TelegramUpdate
@@ -156,6 +157,7 @@ async def _telegram_edit_patch(
 
 
 @router.post("/webhook")
+@limiter.limit(settings.RATE_LIMIT_WEBHOOK)
 async def telegram_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),

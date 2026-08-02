@@ -40,6 +40,15 @@ requires_pg = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(scope="function", autouse=True)
+def _reset_rate_limiter():
+    from app.limiter import limiter
+
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
 @pytest.fixture(scope="session")
 async def _engine():
     if not _pg_available:

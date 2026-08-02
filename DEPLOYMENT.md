@@ -20,14 +20,31 @@ cp .env.example .env
 ```bash
 # Generate with: openssl rand -hex 32
 SECRET_KEY=<32-byte-hex>
-ENCRYPTION_KEY=<32-byte-base64>
+# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# The backend refuses to start in production without a valid Fernet key.
+ENCRYPTION_KEY=<valid-fernet-key-ending-in-equals>
 POSTGRES_PASSWORD=<strong-password>
+# MinIO root credentials (used by both MinIO and the backend's S3 client).
+# Generate with: openssl rand -hex 16
+MINIO_ROOT_USER=<minio-user>
+MINIO_ROOT_PASSWORD=<minio-strong-password>
+# Browser origin(s) allowed to call the API, comma-separated. Must match the
+# frontend URL exactly (e.g. https://yourdomain.com). No wildcard in production.
+CORS_ALLOWED_ORIGINS=https://yourdomain.com
 OPENROUTER_API_KEY=<your-key>
 TELEGRAM_BOT_TOKEN=<your-token>
 TELEGRAM_BOT_USERNAME=<your-bot-username>
 TELEGRAM_WEBHOOK_SECRET=<random-webhook-secret>
 TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK=false
+# Only needed if you generate presigned document download links from outside the
+# server. If left empty, downloads fall back to the internal MinIO endpoint.
+# S3_PUBLIC_ENDPOINT_URL=https://yourdomain.com
 ```
+
+The minimum set of variables that will fail deployment if missing:
+`POSTGRES_PASSWORD`, `SECRET_KEY`, `ENCRYPTION_KEY`, `MINIO_ROOT_PASSWORD`,
+`CORS_ALLOWED_ORIGINS`, `OPENROUTER_API_KEY`, `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_WEBHOOK_SECRET`.
 
 ### 3. Deploy
 ```bash
@@ -43,7 +60,15 @@ Internet → Nginx (80/443) → Frontend (3000)
                            → Celery Worker (internal)
                            → PostgreSQL (internal)
                            → Redis (internal)
+                           → MinIO (internal, object storage)
 ```
+
+MinIO runs on the internal `backend` network only — no public ports. Receipts
+are uploaded by the backend and processed by the Celery worker over that
+network. The `minio-init` one-shot service creates the bucket on first boot.
+To inspect the MinIO console from the server, forward the console port:
+`docker compose -f docker-compose.prod.yml exec minio sh` or use
+`docker compose -f docker-compose.prod.yml run --rm -p 9001:9001 minio server /data --console-address ":9001"`.
 
 ## CI/CD Pipelines
 
@@ -111,7 +136,22 @@ docker compose -f docker-compose.prod.yml restart nginx
 
 ## Telegram Webhook (Production)
 
-Once you have a public HTTPS URL:
+The one-command script reads `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and
+`PUBLIC_BASE_URL` from the environment, calls `setWebhook`, then verifies with
+`getWebhookInfo`. It can run on the server or anywhere the token is available:
+
+```bash
+# From the repo root, against the running backend container:
+docker compose -f docker-compose.prod.yml exec backend python -m app.scripts.telegram_setup
+
+# Or locally, against a reachable public URL:
+PUBLIC_BASE_URL=https://yourdomain.com python -m app.scripts.telegram_setup
+```
+
+The webhook URL is `PUBLIC_BASE_URL + /api/v1/telegram/webhook`. The script
+prints a clear success or failure summary (including whether Telegram reports
+`last_error`/pending updates). Equivalent raw curl:
+
 ```bash
 curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
@@ -119,10 +159,54 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 ```
 
 `TELEGRAM_WEBHOOK_SECRET` is mandatory outside the explicit local-development
-bypass. Keep `TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK=false` in staging and production.
+bypass, and the webhook endpoint is rate-limited (`RATE_LIMIT_WEBHOOK`, default
+30/minute per IP) as an extra abuse guard. Keep
+`TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK=false` in staging and production.
 To connect a company, request a pairing link from Telegram Settings and send the
 generated `/start <single-use-code>` command to the configured bot before the code
 expires. Pairing codes are returned once and only their hashes are stored.
+
+## Backup & Restore
+
+Database and object storage are both persisted in named volumes (`pgdata`,
+`redisdata`, `miniodata`). Back up the database daily and the volumes as needed.
+
+```bash
+# Backup database to a file
+docker compose -f docker-compose.prod.yml exec postgres \
+  pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore (drop/recreate as needed)
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < backup_20260101_120000.sql
+```
+
+> `ENCRYPTION_KEY` and `SECRET_KEY` are not recoverable from backups. Store them
+> safely (password manager / secret manager); losing `ENCRYPTION_KEY` makes any
+> encrypted-at-rest values unreadable, and losing `SECRET_KEY` invalidates all
+> issued JWTs.
+
+## Firewall
+
+Only expose Nginx. Everything else lives on the internal `backend`/`frontend`
+networks and must not be published.
+
+| Port | Protocol | Purpose | Public? |
+|---|---|---|---|
+| 22 | TCP | SSH (admin) | Optional / VPN-only |
+| 80 | TCP | HTTP → HTTPS redirect | Yes |
+| 443 | TCP | HTTPS | Yes |
+
+```bash
+# ufw example
+ufw allow OpenSSH
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw enable
+```
+
+Do not open 5432 (Postgres), 6379 (Redis), 9000/9001 (MinIO), 3000 (frontend)
+or 8000 (backend) to the public internet.
 
 ## Monitoring
 

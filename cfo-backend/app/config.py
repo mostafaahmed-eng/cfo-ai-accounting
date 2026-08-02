@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -37,10 +37,14 @@ class Settings(BaseSettings):
         "image/png",
         "application/pdf",
     ]
-    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    CORS_ALLOWED_ORIGINS: str = Field(
+        default="http://localhost:3000",
+        validation_alias=AliasChoices("CORS_ALLOWED_ORIGINS", "ALLOWED_ORIGINS"),
+    )
     MIN_PASSWORD_LENGTH: int = 8
     RATE_LIMIT_LOGIN: str = "5/minute"
     RATE_LIMIT_AI: str = "10/hour"
+    RATE_LIMIT_WEBHOOK: str = "30/minute"
     ENVIRONMENT: str = "development"
 
     @field_validator("SECRET_KEY")
@@ -53,6 +57,27 @@ class Settings(BaseSettings):
             and v == "change-me-in-production"
         ):
             raise ValueError("SECRET_KEY must be changed from default in production")
+        return v
+
+    @field_validator("ENCRYPTION_KEY")
+    @classmethod
+    def validate_encryption_key(cls, v: str) -> str:
+        import os
+
+        if os.environ.get("ENVIRONMENT") != "production":
+            return v
+        if not v:
+            raise ValueError("ENCRYPTION_KEY must be set in production")
+        try:
+            from cryptography.fernet import Fernet
+
+            Fernet(v.encode())
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                "ENCRYPTION_KEY must be a valid Fernet key "
+                '(generate with: python -c "from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())")'
+            ) from exc
         return v
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

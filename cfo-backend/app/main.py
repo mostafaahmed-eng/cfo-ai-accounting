@@ -14,7 +14,9 @@ app = FastAPI(title="AI CFO Manager", version="0.1.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-allowed_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+allowed_origins = [
+    o.strip() for o in settings.CORS_ALLOWED_ORIGINS.split(",") if o.strip()
+]
 if (
     settings.ENVIRONMENT == "development"
     and "http://localhost:3000" not in allowed_origins
