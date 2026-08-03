@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import httpx
@@ -79,6 +79,7 @@ async def _find_duplicate(
     session: AsyncSession,
     item: InboxItem,
     extracted: ExtractionResult,
+    transaction_date: date,
 ):
     exact = await session.execute(
         select(InboxItem).where(
@@ -98,7 +99,7 @@ async def _find_duplicate(
             DraftTransaction.inbox_item_id != item.id,
             DraftTransaction.amount == extracted.amount,
             DraftTransaction.currency == extracted.currency,
-            DraftTransaction.transaction_date == extracted.transaction_date,
+            DraftTransaction.transaction_date == transaction_date,
             DraftTransaction.status.in_(
                 ["ready_for_review", "approved", "posted", "review_required"]
             ),
@@ -189,6 +190,13 @@ async def _finalize_extraction(
         await session.commit()
         return {"status": "failed", "reason": "invalid_extraction"}
 
+    transaction_date = extracted.transaction_date or datetime.now(UTC).date()
+    draft_type = (
+        "expense"
+        if extracted.transaction_type == "unknown"
+        else extracted.transaction_type
+    )
+
     extraction = AIExtraction(
         id=uuid4(),
         company_id=item.company_id,
@@ -211,7 +219,7 @@ async def _finalize_extraction(
     session.add(extraction)
 
     duplicate_status, duplicate_reason, duplicate_of = await _find_duplicate(
-        session, item, extracted
+        session, item, extracted, transaction_date
     )
     vendor_name = extracted.vendor.name or ""
     description = extracted.description.strip()
@@ -221,11 +229,11 @@ async def _finalize_extraction(
         "needs_clarification" if item.source == "telegram" else "ready_for_review"
     )
     if draft:
-        draft.type = extracted.transaction_type
+        draft.type = draft_type
         draft.amount = extracted.amount
         draft.tax_amount = extracted.tax_amount or 0
         draft.currency = extracted.currency.upper()
-        draft.transaction_date = extracted.transaction_date
+        draft.transaction_date = transaction_date
         draft.description = f"[AI] {description}"
         draft.reference_number = extracted.reference_number
         draft.status = draft_status
@@ -238,11 +246,11 @@ async def _finalize_extraction(
             id=uuid4(),
             company_id=item.company_id,
             inbox_item_id=item.id,
-            type=extracted.transaction_type,
+            type=draft_type,
             amount=extracted.amount,
             tax_amount=extracted.tax_amount or 0,
             currency=extracted.currency.upper(),
-            transaction_date=extracted.transaction_date,
+            transaction_date=transaction_date,
             description=f"[AI] {description}",
             category_account_id=None,
             payment_account_id=None,

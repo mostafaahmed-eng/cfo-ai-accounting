@@ -109,3 +109,49 @@ class TestAIOutputValidation:
         result = ExtractionResult(**data)
         assert result.confidence.overall == 0.95
         assert result.confidence.amount == 1.0
+
+    def test_missing_date_is_allowed(self):
+        data = {
+            "document_type": "text_transaction",
+            "transaction_type": "expense",
+            "amount": 100.0,
+            "tax_amount": 0,
+            "currency": "EGP",
+            "vendor": {"name": None, "tax_number": None},
+            "description": "VPS hosting",
+            "category_hint": "hosting",
+            "language": "en",
+            "confidence": {
+                "overall": 0.7,
+                "amount": 1.0,
+                "currency": 1.0,
+                "date": 0.0,
+                "category": 0.8,
+            },
+            "needs_clarification": True,
+            "questions": ["What was the transaction date?"],
+        }
+        result = ExtractionResult(**data)
+        assert result.transaction_date is None
+
+    def test_unknown_transaction_type_is_allowed(self):
+        data = {
+            "document_type": "text_transaction",
+            "transaction_type": "unknown",
+            "amount": 100.0,
+            "tax_amount": 0,
+            "currency": "EGP",
+            "vendor": {"name": None, "tax_number": None},
+            "description": "Ambiguous transaction",
+            "category_hint": "general",
+            "language": "en",
+            "confidence": {
+                "overall": 0.4,
+                "amount": 0.9,
+                "currency": 0.9,
+                "date": 0.0,
+                "category": 0.2,
+            },
+        }
+        result = ExtractionResult(**data)
+        assert result.transaction_type == "unknown"

@@ -190,9 +190,11 @@ chart of accounts.
 # All services
 docker compose -f docker-compose.prod.yml logs -f
 
-# A single service (backend, celery-worker, frontend, nginx, postgres, redis, minio)
+# A single service (backend, celery-worker, frontend, nginx, postgres, redis, minio,
+# telegram-poll when the profile is enabled)
 docker compose -f docker-compose.prod.yml logs -f backend
 docker compose -f docker-compose.prod.yml logs -f celery-worker
+docker compose -f docker-compose.prod.yml --profile telegram-poll logs -f telegram-poll
 
 # Service status / health
 docker compose -f docker-compose.prod.yml ps
@@ -205,6 +207,8 @@ docker compose -f docker-compose.prod.yml ps
 ```bash
 git pull
 docker compose -f docker-compose.prod.yml up --build -d
+# If you use the Telegram polling worker, add its profile:
+# docker compose -f docker-compose.prod.yml --profile telegram-poll up --build -d
 docker compose -f docker-compose.prod.yml ps
 curl -f http://<VPS_IP>:8080/health
 ```
@@ -225,6 +229,7 @@ docker compose -f docker-compose.prod.yml up --build -d
 Internet ── http://<VPS_IP>:8080 ──► nginx ──► frontend (3000, internal)
                                 └──► backend API (8000, internal)
                                       ├── celery-worker (internal)
+                                      ├── telegram-poll (optional, internal)
                                       ├── PostgreSQL (internal)
                                       ├── Redis (internal)
                                       └── MinIO (internal object storage)
@@ -251,6 +256,61 @@ The webhook URL is `PUBLIC_BASE_URL + /api/v1/telegram/webhook`. Keep
 
 > Note: plain HTTP on a bare IP works for manual verification. Telegram requires a public
 > HTTPS webhook URL, so the webhook can only be fully registered once a domain + SSL exist.
+
+---
+
+## Telegram Bot over plain HTTP (long-polling — recommended until HTTPS exists)
+
+A Telegram webhook needs a **public HTTPS** endpoint that Telegram can reach. On the
+IP-based HTTP deployment above, the bot silently receives nothing, so `/start` pairing and
+chat messages never arrive. The fix is a **polling worker**: it calls Telegram's
+`getUpdates` (outbound only — no inbound port needed) and forwards every update to the
+local webhook endpoint, so the existing bot logic (pairing, extraction, drafts) is used
+unchanged.
+
+1. **Delete any existing webhook** (polling and webhook cannot run at the same time):
+
+   ```bash
+   curl -s https://api.telegram.org/bot<TOKEN>/deleteWebhook
+   ```
+
+2. In `.env`, confirm the bot variables are set:
+
+   ```
+   TELEGRAM_BOT_TOKEN=<token>
+   TELEGRAM_WEBHOOK_SECRET=<random string>
+   TELEGRAM_POLLING_ENABLED=true
+   # defaults are fine if unset:
+   # TELEGRAM_POLLING_INTERNAL_WEBHOOK_URL=http://backend:8000/api/v1/telegram/webhook
+   # TELEGRAM_POLLING_OFFSET_FILE=/tmp/telegram_poll_offset
+   ```
+
+3. Start the stack **with the `telegram-poll` profile**:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml --profile telegram-poll up --build -d
+   ```
+
+   (Every later `up --build -d` that touches the stack should include `--profile
+   telegram-poll` so the poller is recreated too.)
+
+4. Verify the worker is running and connected:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml --profile telegram-poll ps
+   docker compose -f docker-compose.prod.yml --profile telegram-poll logs -f telegram-poll
+   ```
+
+Expected logs show `Telegram polling started (offset=... webhook=...)`. If you see a
+`409` conflict message, a webhook is still registered on the token — run
+`deleteWebhook` again.
+
+Then open Telegram, press **Start** on the bot, and send the pairing code from the
+dashboard. The worker delivers the update to the backend and the bot replies.
+
+> If you later add HTTPS, stop the poller (run `up -d` without `--profile telegram-poll`),
+> delete any leftover polling offset is fine, and register the webhook with
+> `python -m app.scripts.telegram_setup` instead. Only one of the two can be active.
 
 ---
 
@@ -314,5 +374,7 @@ docker compose -f docker-compose.prod.yml restart postgres
 
 1. Point DNS at the VPS.
 2. Configure HTTPS (Let's Encrypt/certbot or a reverse proxy).
-3. Register the Telegram webhook against the HTTPS URL.
+3. Switch the bot from polling to webhooks: stop `telegram-poll` (redeploy without
+   `--profile telegram-poll`), then register the webhook against the HTTPS URL with
+   `python -m app.scripts.telegram_setup`.
 4. Set `S3_PUBLIC_ENDPOINT_URL` to the public endpoint for presigned download links.

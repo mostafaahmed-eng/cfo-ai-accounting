@@ -374,3 +374,43 @@ async def test_foreign_or_merely_similar_drafts_are_not_flagged(
         _valid_extraction(reference="LOCAL-UNIQUE"),
     )
     assert result["duplicate_status"] == "unique"
+
+
+async def test_provider_result_without_date_creates_draft_with_default(
+    db_session, _setup_company_and_user
+):
+    from datetime import UTC, datetime
+
+    company_id, user_id, _ = _setup_company_and_user
+    extraction_result = _valid_extraction()
+    extraction_result["extracted"]["transaction_date"] = None
+    extraction_result["extracted"]["transaction_type"] = "unknown"
+    item = InboxItem(
+        id=uuid4(),
+        company_id=company_id,
+        source="web_text",
+        content_type="text",
+        original_text="I spent 100 EGP on hosting",
+        detected_language="en",
+        status="processing",
+        submitted_by=user_id,
+        content_hash="f" * 64,
+        duplicate_status="unique",
+    )
+    db_session.add(item)
+    await db_session.flush()
+
+    result = await _finalize_extraction(db_session, item, extraction_result)
+
+    assert result["status"] == "review_required"
+    draft = (
+        await db_session.execute(
+            select(DraftTransaction).where(
+                DraftTransaction.inbox_item_id == item.id,
+                DraftTransaction.company_id == company_id,
+            )
+        )
+    ).scalar_one()
+    assert draft.transaction_date == datetime.now(UTC).date()
+    assert draft.type == "expense"
+    assert draft.status == "ready_for_review"

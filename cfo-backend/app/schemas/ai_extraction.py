@@ -20,11 +20,11 @@ class ConfidenceScores(BaseModel):
 
 class ExtractionResult(BaseModel):
     document_type: Literal["receipt", "invoice", "text_transaction", "unknown"]
-    transaction_type: Literal["expense", "income", "transfer"]
+    transaction_type: Literal["expense", "income", "transfer", "unknown"]
     amount: float = Field(gt=0)
     tax_amount: float | None = Field(default=0, ge=0)
     currency: str = Field(min_length=3, max_length=3)
-    transaction_date: date
+    transaction_date: date | None = None
     vendor: VendorInfo
     description: str = Field(min_length=1)
     category_hint: str | None = None

@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     TELEGRAM_PAIRING_TTL_MINUTES: int = 15
     TELEGRAM_EDIT_TTL_MINUTES: int = 15
     TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK: bool = False
+    TELEGRAM_POLLING_ENABLED: bool = False
+    TELEGRAM_POLLING_INTERNAL_WEBHOOK_URL: str = ""
+    TELEGRAM_POLLING_OFFSET_FILE: str = "/tmp/telegram_poll_offset"
     ENCRYPTION_KEY: str = ""
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
     MAX_PDF_PAGES: int = 20
