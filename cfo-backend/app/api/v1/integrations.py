@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,16 @@ async def connect_telegram(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
+    bot_username = settings.TELEGRAM_BOT_USERNAME.strip()
+    if not bot_username:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Telegram is not configured: TELEGRAM_BOT_USERNAME is not set. "
+                "Set it to the bot username (without @) before connecting."
+            ),
+        )
+
     stale_disabled_result = await db.execute(
         select(TelegramConnection)
         .where(
@@ -43,9 +53,10 @@ async def connect_telegram(
     )
     existing = result.scalar_one_or_none()
     if existing and existing.status == "active":
+        existing.bot_username = bot_username
         return TelegramStatusResponse(
             connected=True,
-            bot_username=existing.bot_username,
+            bot_username=bot_username,
             chat_id=existing.telegram_chat_id,
             status="active",
         )
@@ -64,22 +75,22 @@ async def connect_telegram(
             .with_for_update()
         )
         connection = disabled_result.scalar_one_or_none()
-        if connection:
-            connection.bot_username = settings.TELEGRAM_BOT_USERNAME or "bot"
-            connection.telegram_chat_id = None
-            connection.connected_by = str(user.id)
-            connection.status = "pending_chat_id"
-        else:
+        if connection is None:
             connection = TelegramConnection(
                 id=uuid4(),
                 company_id=company_id,
-                bot_username=settings.TELEGRAM_BOT_USERNAME or "bot",
+                bot_username=bot_username,
                 telegram_chat_id=None,
                 connected_by=str(user.id),
                 status="pending_chat_id",
             )
             db.add(connection)
-        await db.flush()
+
+    connection.bot_username = bot_username
+    connection.telegram_chat_id = None
+    connection.connected_by = str(user.id)
+    connection.status = "pending_chat_id"
+    await db.flush()
 
     pairing_creation = await create_pairing(
         db,
@@ -87,15 +98,11 @@ async def connect_telegram(
         company_id=company_id,
         user_id=user.id,
     )
-    pairing_link = (
-        f"https://t.me/{connection.bot_username}?start={pairing_creation.code}"
-        if connection.bot_username and connection.bot_username != "bot"
-        else None
-    )
+    pairing_link = f"https://t.me/{bot_username}?start={pairing_creation.code}"
 
     return TelegramStatusResponse(
         connected=False,
-        bot_username=connection.bot_username,
+        bot_username=bot_username,
         chat_id=None,
         status="pending",
         pairing_code=pairing_creation.code,
@@ -161,9 +168,10 @@ async def telegram_status(
     connection = result.scalar_one_or_none()
     if not connection:
         return TelegramStatusResponse(connected=False)
+    bot_username = settings.TELEGRAM_BOT_USERNAME.strip() or connection.bot_username
     return TelegramStatusResponse(
         connected=True,
-        bot_username=connection.bot_username,
+        bot_username=bot_username,
         chat_id=connection.telegram_chat_id,
         status="active",
     )

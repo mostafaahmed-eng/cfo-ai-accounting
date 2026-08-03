@@ -30,6 +30,9 @@ def _fake_telegram(monkeypatch):
         telegram_api.settings, "TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK", False
     )
     monkeypatch.setattr(
+        telegram_api.settings, "TELEGRAM_BOT_USERNAME", "testbot"
+    )
+    monkeypatch.setattr(
         telegram_api.send_telegram_response, "delay", lambda *args, **kwargs: None
     )
     monkeypatch.setattr(
@@ -86,6 +89,74 @@ async def _request_pairing(client, db_session, company_id, headers):
     assert payload["pairing_code"]
     assert payload["chat_id"] is None
     return payload
+
+
+@pytest.mark.asyncio
+async def test_connect_pairing_link_uses_configured_username_without_duplication(
+    client, db_session, _setup_company_and_user
+):
+    company_id, _, headers = _setup_company_and_user
+    payload = await _request_pairing(client, db_session, company_id, headers)
+
+    assert payload["bot_username"] == "testbot"
+    assert payload["pairing_link"] == (
+        f"https://t.me/testbot?start={payload['pairing_code']}"
+    )
+    assert payload["pairing_link"].count("testbot") == 1
+
+
+@pytest.mark.asyncio
+async def test_connect_refreshes_stale_db_bot_username(
+    client, db_session, _setup_company_and_user
+):
+    company_id, user_id, headers = _setup_company_and_user
+    stale = TelegramConnection(
+        id=uuid4(),
+        company_id=company_id,
+        bot_username="stalebotstalebot",
+        telegram_chat_id=None,
+        connected_by=user_id,
+        status="pending_chat_id",
+    )
+    db_session.add(stale)
+    await db_session.flush()
+
+    payload = await _request_pairing(client, db_session, company_id, headers)
+
+    assert payload["bot_username"] == "testbot"
+    assert payload["pairing_link"] == (
+        f"https://t.me/testbot?start={payload['pairing_code']}"
+    )
+    assert payload["pairing_link"].count("testbot") == 1
+
+    result = await db_session.execute(
+        select(TelegramConnection).where(TelegramConnection.company_id == company_id)
+    )
+    stored = result.scalar_one()
+    assert stored.bot_username == "testbot"
+
+
+@pytest.mark.asyncio
+async def test_connect_fails_clearly_when_username_not_configured(
+    client, db_session, _setup_company_and_user, monkeypatch
+):
+    company_id, _, headers = _setup_company_and_user
+    membership_result = await db_session.execute(
+        select(CompanyMember).where(CompanyMember.company_id == company_id)
+    )
+    membership = membership_result.scalar_one()
+    user_result = await db_session.execute(
+        select(User).where(User.id == membership.user_id)
+    )
+    user_result.scalar_one().status = UserStatus.active
+    await db_session.flush()
+
+    monkeypatch.setattr(telegram_api.settings, "TELEGRAM_BOT_USERNAME", "")
+    response = await client.post(
+        "/api/v1/integrations/telegram/connect", headers=headers
+    )
+    assert response.status_code == 503
+    assert "TELEGRAM_BOT_USERNAME" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

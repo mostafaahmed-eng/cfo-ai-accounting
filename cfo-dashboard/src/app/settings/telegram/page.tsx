@@ -75,6 +75,13 @@ export default function TelegramSettingsPage() {
                 >
                   {connectMutation.isPending ? 'Connecting...' : 'Connect Bot'}
                 </button>
+                {connectMutation.isError && (
+                  <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    {(connectMutation.error as { response?: { data?: { detail?: string } } })
+                      ?.response?.data?.detail ??
+                      'Could not connect. Please try again.'}
+                  </div>
+                )}
                 {connectMutation.data?.pairing_code && (
                   <div className="rounded border border-blue-200 bg-blue-50 p-4 text-sm">
                     <p className="font-medium">One-time pairing code</p>
