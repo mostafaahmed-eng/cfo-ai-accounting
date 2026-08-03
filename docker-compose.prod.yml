@@ -118,6 +118,7 @@ services:
       TELEGRAM_PAIRING_TTL_MINUTES: ${TELEGRAM_PAIRING_TTL_MINUTES:-15}
       TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK: "false"
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      HSTS_ENABLED: ${HSTS_ENABLED:-false}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-10485760}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

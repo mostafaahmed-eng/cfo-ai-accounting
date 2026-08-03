@@ -1,14 +1,22 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 
 export default function Home() {
-  const { login, isAuthenticated, isLoading } = useAuth()
+  const { login, isAuthenticated, isLoading, authError } = useAuth()
+  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace('/dashboard')
+    }
+  }, [isAuthenticated, router])
 
   if (isLoading) {
     return (
@@ -47,6 +55,11 @@ export default function Home() {
         <p className="text-gray-500 text-center mb-6">Sign in to your account</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {authError && (
+            <div className="bg-red-50 text-red-700 text-sm px-4 py-2 rounded">
+              {authError}
+            </div>
+          )}
           {error && (
             <div className="bg-red-50 text-red-700 text-sm px-4 py-2 rounded">
               {error}

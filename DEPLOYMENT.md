@@ -69,6 +69,12 @@ if these are missing/wrong):
 >
 > `NEXT_PUBLIC_API_BASE_URL` is baked into the frontend **at build time** (Next.js). If you
 > change your IP/port, you must rebuild the frontend (`docker compose ... up --build -d`).
+>
+> **Finalize `POSTGRES_PASSWORD` and `MINIO_ROOT_PASSWORD` BEFORE the first `up`.** Those
+> credentials are only applied when their data volumes are first initialized. Changing them
+> later does not take effect (the container keeps the old ones) and the backend fails with
+> `password authentication failed`. If you must change them after the first start, delete
+> the volumes first — see Troubleshooting.
 
 Everything else in `.env.example` has a working default. For the full inventory of every
 variable and how to obtain it, see `MANUAL_SETUP_CHECKLIST.md`.
@@ -272,6 +278,18 @@ Object storage and the database live in named volumes (`pgdata`, `redisdata`,
 docker compose -f docker-compose.prod.yml logs backend
 docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
 ```
+
+**`password authentication failed for user "postgres"` (or S3 auth errors from MinIO):**
+The data volumes were initialized with older credentials and changing them in `.env` does
+not apply retroactively. Reset the volumes — **only safe when you have no data you need**:
+
+```bash
+docker compose -f docker-compose.prod.yml down
+docker volume rm ai-cfo-manager_pgdata ai-cfo-manager_miniodata
+docker compose -f docker-compose.prod.yml up --build -d
+```
+
+(If your project folder/name differs, check the exact names with `docker volume ls`.)
 
 **Celery tasks not running:**
 ```bash

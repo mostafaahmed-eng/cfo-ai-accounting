@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
+import axios from 'axios'
 import apiClient from '@/lib/api-client'
 import type { User, LoginResponse } from '@/lib/types'
 
@@ -9,6 +10,7 @@ interface AuthContextType {
   user: User | null
   token: string | null
   isLoading: boolean
+  authError: string | null
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   isAuthenticated: boolean
@@ -22,6 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [authError, setAuthError] = useState<string | null>(null)
   const router = useRouter()
   const pathname = usePathname()
 
@@ -31,12 +34,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data } = await apiClient.get<User>('/auth/me', {
         headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 15000,
       })
       setUser(data)
-    } catch {
+      setAuthError(null)
+    } catch (err) {
       localStorage.removeItem('token')
       setToken(null)
       setUser(null)
+      if (axios.isAxiosError(err) && err.response) {
+        // Server answered (e.g. 401 expired/invalid token, or a 5xx).
+        // A 401 is a normal "no valid session" -> show plain login, no error.
+        setAuthError(
+          err.response.status === 401
+            ? null
+            : 'Session check failed (server error). Please try again.'
+        )
+      } else {
+        // Network error / timeout (e.g. an unreachable API or a browser-forced
+        // HTTPS upgrade that fails) — surface it instead of hanging forever.
+        setAuthError(
+          'Could not reach the server to verify your session. Check your connection and refresh.'
+        )
+      }
     }
   }, [])
 
@@ -57,7 +77,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [isLoading, isProtected, token, router])
 
   const login = useCallback(async (email: string, password: string) => {
-    const { data } = await apiClient.post<LoginResponse>('/auth/login', { email, password })
+    setAuthError(null)
+    const { data } = await apiClient.post<LoginResponse>(
+      '/auth/login',
+      { email, password },
+      { timeout: 15000 }
+    )
     localStorage.setItem('token', data.access_token)
     setToken(data.access_token)
     setUser(data.user)
@@ -77,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router])
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ user, token, isLoading, authError, login, logout, isAuthenticated: !!token }}>
       {children}
     </AuthContext.Provider>
   )

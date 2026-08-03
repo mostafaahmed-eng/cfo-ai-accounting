@@ -42,6 +42,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CORS_ALLOWED_ORIGINS", "ALLOWED_ORIGINS"),
     )
     MIN_PASSWORD_LENGTH: int = 8
+    HSTS_ENABLED: bool = False
     RATE_LIMIT_LOGIN: str = "5/minute"
     RATE_LIMIT_AI: str = "10/hour"
     RATE_LIMIT_WEBHOOK: str = "30/minute"

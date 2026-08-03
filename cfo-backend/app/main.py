@@ -40,10 +40,16 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     if settings.ENVIRONMENT == "production":
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+    # Strict-Transport-Security is host-scoped, not port-scoped: once a browser sees
+    # it for a host it forces HTTPS for EVERY request to that host, on every port.
+    # This deployment is plain HTTP (IP or Cloudflare non-HTTPS proxy port like 8080),
+    # so sending HSTS here breaks the site. Only enable it (HSTS_ENABLED=true) once the
+    # site is served over real end-to-end HTTPS (domain + SSL).
+    if settings.HSTS_ENABLED:
         response.headers["Strict-Transport-Security"] = (
             "max-age=63072000; includeSubDomains; preload"
         )
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
     return response
 
 
