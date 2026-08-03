@@ -29,9 +29,7 @@ def _fake_telegram(monkeypatch):
     monkeypatch.setattr(
         telegram_api.settings, "TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK", False
     )
-    monkeypatch.setattr(
-        telegram_api.settings, "TELEGRAM_BOT_USERNAME", "testbot"
-    )
+    monkeypatch.setattr(telegram_api.settings, "TELEGRAM_BOT_USERNAME", "testbot")
     monkeypatch.setattr(
         telegram_api.send_telegram_response, "delay", lambda *args, **kwargs: None
     )
