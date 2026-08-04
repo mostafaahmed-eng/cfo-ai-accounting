@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import axios from 'axios'
 import apiClient from '@/lib/api-client'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { InboxItem } from '@/lib/types'
@@ -43,8 +44,14 @@ export default function QuickCapture() {
           {mutation.isPending ? 'Submitting...' : 'Submit'}
         </button>
       </div>
-      {mutation.isError && <p className="text-red-600 text-sm mt-2">Failed to submit</p>}
-      {mutation.data && (
+      {mutation.isError && (
+        <p className="text-red-600 text-sm mt-2">
+          {axios.isAxiosError(mutation.error)
+            ? (mutation.error.response?.data as { detail?: string })?.detail ?? 'Failed to submit'
+            : 'Failed to submit'}
+        </p>
+      )}
+      {mutation.isSuccess && !mutation.isPending && (
         <p className="text-green-600 text-sm mt-2">
           Submitted: {mutation.data.status === 'queued' ? 'queued for processing' : mutation.data.status}
         </p>

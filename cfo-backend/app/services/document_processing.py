@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 from dataclasses import dataclass
 
 import httpx
@@ -33,10 +34,9 @@ class DocumentProviderError(RuntimeError):
 
 def _parse_provider_json(content: str) -> dict:
     candidate = content.strip()
-    if candidate.startswith("```"):
-        lines = candidate.splitlines()
-        if len(lines) >= 3 and lines[-1].strip() == "```":
-            candidate = "\n".join(lines[1:-1]).strip()
+    md_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", candidate, re.DOTALL)
+    if md_match:
+        candidate = md_match.group(1).strip()
     parsed = json.loads(candidate)
     if not isinstance(parsed, dict):
         raise TypeError("Provider response must be a JSON object")
@@ -134,6 +134,16 @@ def _validate_file_structure(content: bytes, mime_type: str) -> None:
         raise DocumentValidationError("malformed_image", "Unreadable image")
 
 
+OCR_SYSTEM_PROMPT = (
+    "You are a document transcription specialist. Your ONLY job is to faithfully "
+    "transcribe every visible word, number, and symbol from the provided receipt, "
+    "invoice, or financial document. Preserve the original layout: keep labels with "
+    "their values, table rows on separate lines, and column headings above their "
+    "data. Support both Arabic and English text. Never summarize, interpret, or "
+    "omit content. Never add commentary or explanations outside the JSON response."
+)
+
+
 async def extract_text_from_document(
     content: bytes,
     mime_type: str,
@@ -165,6 +175,7 @@ async def extract_text_from_document(
                 json={
                     "model": settings.OPENROUTER_MODEL,
                     "messages": [
+                        {"role": "system", "content": OCR_SYSTEM_PROMPT},
                         {
                             "role": "user",
                             "content": [
@@ -185,7 +196,7 @@ async def extract_text_from_document(
                                     ),
                                 },
                             ],
-                        }
+                        },
                     ],
                     "temperature": 0,
                 },

@@ -24,6 +24,8 @@ export default function ReceiptUpload() {
       if (fileRef.current) fileRef.current.value = ''
       setError('')
       queryClient.invalidateQueries({ queryKey: ['inbox'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['draft-transactions'] })
     },
     onError: (error) => {
       const detail = axios.isAxiosError(error) ? error.response?.data?.detail : undefined
@@ -45,7 +47,11 @@ export default function ReceiptUpload() {
         className="text-sm"
       />
       {mutation.isPending && <p className="text-sm text-gray-500 mt-2">Uploading...</p>}
-      {mutation.data && <p className="text-sm text-green-600 mt-2">Uploaded and queued for processing</p>}
+      {mutation.isSuccess && !mutation.isPending && (
+        <p className="text-sm text-green-600 mt-2">
+          Uploaded and queued for processing. Check the inbox for results.
+        </p>
+      )}
       {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
     </div>
   )
