@@ -4,12 +4,15 @@ import { useState, useRef } from 'react'
 import axios from 'axios'
 import apiClient from '@/lib/api-client'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCompany } from '@/contexts/CompanyContext'
 import type { Document } from '@/lib/types'
 
 export default function ReceiptUpload() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState('')
+  const { selectedCompanyId } = useCompany()
   const queryClient = useQueryClient()
+  const companyReady = Boolean(selectedCompanyId)
 
   const mutation = useMutation<Document, Error, File>({
     mutationFn: async (file: File) => {
@@ -40,12 +43,16 @@ export default function ReceiptUpload() {
         ref={fileRef}
         type="file"
         accept=".jpg,.jpeg,.png,.pdf"
+        disabled={!companyReady}
         onChange={(e) => {
           const file = e.target.files?.[0]
           if (file) mutation.mutate(file)
         }}
         className="text-sm"
       />
+      {!companyReady && (
+        <p className="text-sm text-gray-500 mt-2">Loading company context...</p>
+      )}
       {mutation.isPending && <p className="text-sm text-gray-500 mt-2">Uploading...</p>}
       {mutation.isSuccess && !mutation.isPending && (
         <p className="text-sm text-green-600 mt-2">

@@ -4,11 +4,13 @@ import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
+import { useCompany } from '@/contexts/CompanyContext'
 import type { CashFlowData } from '@/lib/types'
 import { DateRangePicker } from '@/components/reports/ReportDatePicker'
 import { useReportDateRange } from '@/hooks/useReportDates'
 
 export default function CashFlowPage() {
+  const { selectedCompanyId } = useCompany()
   const {
     startDate,
     endDate,
@@ -17,14 +19,14 @@ export default function CashFlowPage() {
     setEndDate,
   } = useReportDateRange()
   const { data: cashFlow, isLoading } = useQuery<CashFlowData>({
-    queryKey: ['report-cashflow', startDate, endDate],
+    queryKey: ['report-cashflow', selectedCompanyId, startDate, endDate],
     queryFn: async () => {
       const { data } = await apiClient.get('/reports/cash-flow', {
         params: { start_date: startDate, end_date: endDate },
       })
       return data
     },
-    enabled: isValid,
+    enabled: Boolean(selectedCompanyId) && isValid,
   })
 
   return (

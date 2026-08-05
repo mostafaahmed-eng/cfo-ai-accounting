@@ -4,20 +4,23 @@ import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
+import { useCompany } from '@/contexts/CompanyContext'
 import type { BalanceSheetData } from '@/lib/types'
 import { AsOfDatePicker } from '@/components/reports/ReportDatePicker'
 import { useReportAsOfDate } from '@/hooks/useReportDates'
 
 export default function BalanceSheetPage() {
+  const { selectedCompanyId } = useCompany()
   const { asOf, setAsOf } = useReportAsOfDate()
   const { data: bs, isLoading } = useQuery<BalanceSheetData>({
-    queryKey: ['report-balance-sheet', asOf],
+    queryKey: ['report-balance-sheet', selectedCompanyId, asOf],
     queryFn: async () => {
       const { data } = await apiClient.get('/reports/balance-sheet', {
         params: { as_of: asOf },
       })
       return data
     },
+    enabled: Boolean(selectedCompanyId),
   })
 
   return (

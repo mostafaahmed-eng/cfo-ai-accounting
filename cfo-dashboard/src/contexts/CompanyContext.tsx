@@ -10,7 +10,10 @@ import {
   type ReactNode,
 } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import apiClient from '@/lib/api-client'
+import apiClient, {
+  markCompanyContextResolved,
+  resetCompanyContextGate,
+} from '@/lib/api-client'
 import type { CompanyMembership } from '@/lib/types'
 import { useAuth } from '@/contexts/AuthContext'
 
@@ -56,6 +59,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isAuthenticated) {
+      resetCompanyContextGate()
       localStorage.removeItem('selected_company_id')
       setSelectedCompanyId(null)
       return
@@ -65,7 +69,10 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     const selectionIsValid = companies.some(
       (company) => company.company_id === selectedCompanyId,
     )
-    if (selectionIsValid) return
+    if (selectionIsValid) {
+      markCompanyContextResolved()
+      return
+    }
 
     if (companies.length === 1) {
       selectCompany(companies[0].company_id)
@@ -73,6 +80,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('selected_company_id')
       setSelectedCompanyId(null)
     }
+    markCompanyContextResolved()
   }, [
     companies,
     isAuthenticated,

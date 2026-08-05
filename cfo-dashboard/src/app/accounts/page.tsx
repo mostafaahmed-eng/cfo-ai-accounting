@@ -4,20 +4,23 @@ import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
+import { useCompany } from '@/contexts/CompanyContext'
 import type { Account } from '@/lib/types'
 import { useState } from 'react'
 
 export default function AccountsPage() {
   const queryClient = useQueryClient()
+  const { selectedCompanyId } = useCompany()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ code: '', name_en: '', type: 'expense', subtype: 'general' })
 
   const { data: accounts, isLoading } = useQuery<Account[]>({
-    queryKey: ['accounts'],
+    queryKey: ['accounts', selectedCompanyId],
     queryFn: async () => {
       const { data } = await apiClient.get('/accounts')
       return data
     },
+    enabled: Boolean(selectedCompanyId),
   })
 
   const createMutation = useMutation({

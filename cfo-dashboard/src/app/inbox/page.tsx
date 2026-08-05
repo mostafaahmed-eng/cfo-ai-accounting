@@ -4,19 +4,22 @@ import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
+import { useCompany } from '@/contexts/CompanyContext'
 import type { InboxItem } from '@/lib/types'
 import { useState } from 'react'
 
 export default function InboxPage() {
   const [view, setView] = useState<'active' | 'archived'>('active')
+  const { selectedCompanyId } = useCompany()
   const { data: items, isLoading } = useQuery<InboxItem[]>({
-    queryKey: ['inbox', view],
+    queryKey: ['inbox', selectedCompanyId, view],
     queryFn: async () => {
       const { data } = await apiClient.get(
         view === 'archived' ? '/intake?status=archived' : '/intake',
       )
       return data
     },
+    enabled: Boolean(selectedCompanyId),
     refetchInterval: (query) =>
       query.state.data?.some((item) => ['queued', 'processing'].includes(item.status))
         ? 3000

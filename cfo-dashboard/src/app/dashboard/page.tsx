@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCompany } from '@/contexts/CompanyContext'
 import apiClient from '@/lib/api-client'
 import type {
   CashFlowData,
@@ -24,6 +25,7 @@ import { useReportDateRange } from '@/hooks/useReportDates'
 
 export default function DashboardPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth()
+  const { selectedCompanyId } = useCompany()
   const {
     startDate,
     endDate,
@@ -32,47 +34,48 @@ export default function DashboardPage() {
     setEndDate,
   } = useReportDateRange()
   const reportParams = { start_date: startDate, end_date: endDate }
+  const companyReady = Boolean(selectedCompanyId)
 
   const { data: dashboard, isLoading: dashLoading } = useQuery<DashboardData>({
-    queryKey: ['dashboard', startDate, endDate],
+    queryKey: ['dashboard', selectedCompanyId, startDate, endDate],
     queryFn: async () => {
       const { data } = await apiClient.get('/reports/dashboard', {
         params: reportParams,
       })
       return data
     },
-    enabled: isAuthenticated && isValid,
+    enabled: isAuthenticated && companyReady && isValid,
   })
 
   const { data: drafts } = useQuery<DraftTransaction[]>({
-    queryKey: ['draft-transactions'],
+    queryKey: ['draft-transactions', selectedCompanyId],
     queryFn: async () => {
       const { data } = await apiClient.get('/draft-transactions')
       return data
     },
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && companyReady,
   })
 
   const { data: cashFlow } = useQuery<CashFlowData>({
-    queryKey: ['report-cashflow', startDate, endDate],
+    queryKey: ['report-cashflow', selectedCompanyId, startDate, endDate],
     queryFn: async () => {
       const { data } = await apiClient.get('/reports/cash-flow', {
         params: reportParams,
       })
       return data
     },
-    enabled: isAuthenticated && isValid,
+    enabled: isAuthenticated && companyReady && isValid,
   })
 
   const { data: expenseCategories } = useQuery<ExpenseByCategoryData>({
-    queryKey: ['report-expenses-by-category', startDate, endDate],
+    queryKey: ['report-expenses-by-category', selectedCompanyId, startDate, endDate],
     queryFn: async () => {
       const { data } = await apiClient.get('/reports/expenses-by-category', {
         params: reportParams,
       })
       return data
     },
-    enabled: isAuthenticated && isValid,
+    enabled: isAuthenticated && companyReady && isValid,
   })
 
   if (authLoading) {
@@ -102,7 +105,7 @@ export default function DashboardPage() {
             onStartDateChange={setStartDate}
             onEndDateChange={setEndDate}
           />
-          {dashLoading ? (
+          {dashLoading || !companyReady ? (
             <p className="text-gray-500">Loading...</p>
           ) : dashboard ? (
             <div className="space-y-6">

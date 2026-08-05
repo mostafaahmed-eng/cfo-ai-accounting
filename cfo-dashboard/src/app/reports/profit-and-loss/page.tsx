@@ -4,11 +4,13 @@ import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
+import { useCompany } from '@/contexts/CompanyContext'
 import type { PnLData } from '@/lib/types'
 import { DateRangePicker } from '@/components/reports/ReportDatePicker'
 import { useReportDateRange } from '@/hooks/useReportDates'
 
 export default function PnLPage() {
+  const { selectedCompanyId } = useCompany()
   const {
     startDate,
     endDate,
@@ -17,14 +19,14 @@ export default function PnLPage() {
     setEndDate,
   } = useReportDateRange()
   const { data: pnl, isLoading } = useQuery<PnLData>({
-    queryKey: ['report-pnl', startDate, endDate],
+    queryKey: ['report-pnl', selectedCompanyId, startDate, endDate],
     queryFn: async () => {
       const { data } = await apiClient.get('/reports/profit-and-loss', {
         params: { start_date: startDate, end_date: endDate },
       })
       return data
     },
-    enabled: isValid,
+    enabled: Boolean(selectedCompanyId) && isValid,
   })
 
   return (

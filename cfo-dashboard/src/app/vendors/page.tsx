@@ -4,20 +4,23 @@ import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
+import { useCompany } from '@/contexts/CompanyContext'
 import type { Vendor } from '@/lib/types'
 import { useState } from 'react'
 
 export default function VendorsPage() {
   const queryClient = useQueryClient()
+  const { selectedCompanyId } = useCompany()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', email: '', phone: '' })
 
   const { data: vendors, isLoading } = useQuery<Vendor[]>({
-    queryKey: ['vendors'],
+    queryKey: ['vendors', selectedCompanyId],
     queryFn: async () => {
       const { data } = await apiClient.get('/vendors')
       return data
     },
+    enabled: Boolean(selectedCompanyId),
   })
 
   const createMutation = useMutation({
