@@ -246,7 +246,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
     command: python -m app.services.telegram_polling
     healthcheck:
-      test: ["CMD-SHELL", "ps -ef | grep telegram_polling | grep -v grep || exit 1"]
+      test: ["CMD-SHELL", "grep -q telegram_polling /proc/1/cmdline || exit 1"]
       interval: 30s
       timeout: 5s
       start_period: 15s
