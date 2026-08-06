@@ -208,8 +208,8 @@ async def telegram_webhook(
                     chat_id,
                     "Hi! I'm the AI CFO bot. To link me to your company:\n\n"
                     "1. Open your dashboard and go to Settings → Telegram.\n"
-                    "2. Press \"Connect Telegram Bot\".\n"
-                    "3. Press \"Open Telegram\" — this link contains your one-time pairing code.\n\n"
+                    '2. Press "Connect Telegram Bot".\n'
+                    '3. Press "Open Telegram" — this link contains your one-time pairing code.\n\n'
                     "A message without a valid pairing link can't connect to a company.",
                 )
                 return {"status": "pairing_failed"}
