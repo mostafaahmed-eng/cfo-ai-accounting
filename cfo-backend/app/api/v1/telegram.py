@@ -203,11 +203,22 @@ async def telegram_webhook(
         if text.startswith("/start"):
             parts = text.split(maxsplit=1)
             code = parts[1].strip() if len(parts) == 2 else ""
+            if not code:
+                send_telegram_response.delay(
+                    chat_id,
+                    "Hi! I'm the AI CFO bot. To link me to your company:\n\n"
+                    "1. Open your dashboard and go to Settings → Telegram.\n"
+                    "2. Press \"Connect Telegram Bot\".\n"
+                    "3. Press \"Open Telegram\" — this link contains your one-time pairing code.\n\n"
+                    "A message without a valid pairing link can't connect to a company.",
+                )
+                return {"status": "pairing_failed"}
             pairing_result = await consume_pairing(db, code=code, chat_id=chat_id)
             if not pairing_result.succeeded:
                 send_telegram_response.delay(
                     chat_id,
-                    "Unable to connect. Request a new pairing link from the dashboard.",
+                    "That pairing link is invalid or has expired. Open a fresh one from your "
+                    "dashboard: Settings → Telegram → Connect Telegram Bot.",
                 )
                 return {"status": "pairing_failed"}
 
