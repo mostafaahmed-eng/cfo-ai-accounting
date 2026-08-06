@@ -217,7 +217,7 @@ async def test_telegram_photo_uses_shared_document_intake(
     dispatched = []
     responses = []
 
-    async def fake_download(file_id):
+    async def fake_download(file_id, token=None):
         assert file_id == "largest-photo"
         return _jpeg()
 

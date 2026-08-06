@@ -1,5 +1,7 @@
+import secrets
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,12 +11,32 @@ from app.database import get_db
 from app.dependencies import get_current_company_id, get_current_user
 from app.models.telegram import TelegramConnection, TelegramPairing
 from app.models.user import User
-from app.schemas.telegram import TelegramStatusResponse
+from app.schemas.telegram import (
+    TelegramBotConfigResponse,
+    TelegramBotConfigUpdate,
+    TelegramStatusResponse,
+)
 from app.services.audit import create_audit_log
+from app.services.telegram_bot_config import (
+    get_telegram_config,
+    resolve_bot_username,
+    save_telegram_config,
+)
 from app.services.telegram_pairing import create_pairing
 
 router = APIRouter()
 settings = get_settings()
+
+TELEGRAM_API_BASE = "https://api.telegram.org/bot"
+
+
+async def _telegram_get_me(token: str) -> dict:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(f"{TELEGRAM_API_BASE}{token}/getMe")
+        try:
+            return response.json()
+        except ValueError:
+            return {"ok": False, "description": f"HTTP {response.status_code}"}
 
 
 @router.post("/telegram/connect", response_model=TelegramStatusResponse)
@@ -23,7 +45,7 @@ async def connect_telegram(
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    bot_username = settings.TELEGRAM_BOT_USERNAME.strip()
+    bot_username = (await resolve_bot_username(db)).strip()
     if not bot_username:
         raise HTTPException(
             status_code=503,
@@ -168,10 +190,84 @@ async def telegram_status(
     connection = result.scalar_one_or_none()
     if not connection:
         return TelegramStatusResponse(connected=False)
-    bot_username = settings.TELEGRAM_BOT_USERNAME.strip() or connection.bot_username
+    bot_username = (await resolve_bot_username(db)).strip() or connection.bot_username
     return TelegramStatusResponse(
         connected=True,
         bot_username=bot_username,
         chat_id=connection.telegram_chat_id,
         status="active",
+    )
+
+
+@router.get("/telegram/bot-config", response_model=TelegramBotConfigResponse)
+async def get_telegram_bot_config(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    config = await get_telegram_config(db)
+    username = ""
+    if config is not None and config.bot_username:
+        username = config.bot_username
+    if not username:
+        username = settings.TELEGRAM_BOT_USERNAME.strip()
+    has_token = bool(config is not None and config.bot_token_encrypted) or bool(
+        settings.TELEGRAM_BOT_TOKEN
+    )
+    return TelegramBotConfigResponse(
+        configured=bool(username),
+        bot_username=username or None,
+        has_token=has_token,
+    )
+
+
+@router.put("/telegram/bot-config", response_model=TelegramBotConfigResponse)
+async def update_telegram_bot_config(
+    data: TelegramBotConfigUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    token = data.bot_token.strip()
+    if not token:
+        raise HTTPException(status_code=422, detail="Bot token is required")
+
+    get_me = await _telegram_get_me(token)
+    if not get_me.get("ok"):
+        detail = get_me.get("description", "Telegram rejected the bot token")
+        raise HTTPException(status_code=422, detail=f"Invalid bot token: {detail}")
+
+    bot_info = get_me.get("result", {})
+    verified_username = bot_info.get("username", "") or ""
+    username = data.bot_username.strip() or verified_username
+    if not username:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not determine the bot username. Enter it manually.",
+        )
+
+    config = await get_telegram_config(db)
+    existing_secret = config.webhook_secret if config is not None else None
+    webhook_secret = existing_secret or secrets.token_urlsafe(32)
+
+    await save_telegram_config(
+        db,
+        bot_token=token,
+        bot_username=username,
+        webhook_secret=webhook_secret,
+        updated_by=user.id,
+    )
+    await create_audit_log(
+        db=db,
+        company_id=None,
+        user_id=str(user.id),
+        actor_type="user",
+        action="telegram.bot_config_updated",
+        entity_type="telegram_bot_config",
+        entity_id="singleton",
+        after_data={"bot_username": username},
+    )
+    return TelegramBotConfigResponse(
+        configured=True,
+        bot_username=username,
+        has_token=True,
+        verified_username=verified_username,
     )

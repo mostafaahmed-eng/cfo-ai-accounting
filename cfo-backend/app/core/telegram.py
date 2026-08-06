@@ -60,10 +60,16 @@ class TelegramClient:
             payload["text"] = text
         return await self._request("answerCallbackQuery", payload)
 
-    async def download_file(self, file_id: str) -> bytes:
+    async def download_file(self, file_id: str, token: str | None = None) -> bytes:
+        if token:
+            base_url = f"{TELEGRAM_API_BASE}{token}"
+            file_base_url = f"{TELEGRAM_FILE_BASE}{token}"
+        else:
+            base_url = self._base_url
+            file_base_url = f"{TELEGRAM_FILE_BASE}{self._token}"
         async with httpx.AsyncClient(timeout=30.0) as client:
             metadata_response = await client.post(
-                f"{self._base_url}/getFile",
+                f"{base_url}/getFile",
                 json={"file_id": file_id},
             )
             metadata_response.raise_for_status()
@@ -72,9 +78,7 @@ class TelegramClient:
             if not metadata.get("ok") or not file_path:
                 raise TelegramFileError("Telegram did not return a downloadable file")
 
-            file_response = await client.get(
-                f"{TELEGRAM_FILE_BASE}{self._token}/{file_path}"
-            )
+            file_response = await client.get(f"{file_base_url}/{file_path}")
             file_response.raise_for_status()
             return file_response.content
 

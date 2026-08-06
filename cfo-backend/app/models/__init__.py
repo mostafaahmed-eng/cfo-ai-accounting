@@ -12,7 +12,12 @@ from app.models.inbox_item import InboxItem
 from app.models.invitation import Invitation
 from app.models.journal import JournalEntry, JournalLine
 from app.models.notification import Notification
-from app.models.telegram import TelegramConnection, TelegramPairing, TelegramUpdate
+from app.models.telegram import (
+    TelegramBotConfig,
+    TelegramConnection,
+    TelegramPairing,
+    TelegramUpdate,
+)
 from app.models.user import User
 from app.models.vendor import Vendor, VendorAlias
 
@@ -35,6 +40,7 @@ __all__ = [
     "JournalEntry",
     "JournalLine",
     "Notification",
+    "TelegramBotConfig",
     "TelegramConnection",
     "TelegramPairing",
     "TelegramUpdate",

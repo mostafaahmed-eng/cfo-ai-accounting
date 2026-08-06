@@ -6,7 +6,7 @@ import Header from '@/components/layout/Header'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '@/lib/api-client'
 import { useCompany } from '@/contexts/CompanyContext'
-import type { TelegramStatus } from '@/lib/types'
+import type { TelegramStatus, TelegramBotConfig } from '@/lib/types'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -16,6 +16,9 @@ export default function TelegramSettingsPage() {
   const [pendingPairing, setPendingPairing] = useState(false)
   const [copied, setCopied] = useState(false)
   const [countdown, setCountdown] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [token, setToken] = useState('')
+  const [username, setUsername] = useState('')
 
   const { data: status } = useQuery<TelegramStatus>({
     queryKey: ['telegram-status', selectedCompanyId],
@@ -25,6 +28,35 @@ export default function TelegramSettingsPage() {
     },
     enabled: Boolean(selectedCompanyId),
     refetchInterval: pendingPairing ? POLL_INTERVAL_MS : false,
+  })
+
+  const { data: botConfig } = useQuery<TelegramBotConfig>({
+    queryKey: ['telegram-bot-config'],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/integrations/telegram/bot-config')
+      return data
+    },
+  })
+
+  const saveConfigMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await apiClient.put<TelegramBotConfig>(
+        '/integrations/telegram/bot-config',
+        { bot_token: token, bot_username: username },
+      )
+      return data
+    },
+    onSuccess: (data) => {
+      setToken('')
+      setUsername('')
+      setEditing(false)
+      queryClient.invalidateQueries({ queryKey: ['telegram-bot-config'] })
+      if (data.verified_username && data.bot_username !== data.verified_username) {
+        alert(
+          `Note: Telegram reports this bot as @${data.verified_username}, but you saved @${data.bot_username}.`,
+        )
+      }
+    },
   })
 
   const connectMutation = useMutation({
@@ -93,6 +125,89 @@ export default function TelegramSettingsPage() {
         <Header />
         <main className="p-6">
           <h2 className="text-2xl font-bold mb-6">Telegram Settings</h2>
+
+          <div className="bg-white rounded-lg shadow p-6 max-w-lg mb-6">
+            <h3 className="text-lg font-semibold mb-1">Bot Setup</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Paste your bot token (from @BotFather) and optionally the bot username. The token is
+              validated with Telegram and stored encrypted.
+            </p>
+            {!editing ? (
+              <div className="flex items-center justify-between">
+                <div className="text-sm">
+                  {botConfig?.configured ? (
+                    <p>
+                      <strong>Bot:</strong> @{botConfig.bot_username}
+                    </p>
+                  ) : (
+                    <p className="text-gray-500">No bot configured yet.</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    setEditing(true)
+                    setUsername(botConfig?.bot_username ?? '')
+                  }}
+                  className="border border-blue-600 text-blue-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-blue-50"
+                >
+                  {botConfig?.configured ? 'Edit' : 'Set up'}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Bot token (from @BotFather)
+                  </label>
+                  <input
+                    type="password"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="123456789:AA..."
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Bot username (without @) — optional, auto-detected from the token
+                  </label>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="YourChatBot"
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
+                {saveConfigMutation.isError && (
+                  <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    {(saveConfigMutation.error as { response?: { data?: { detail?: string } } })
+                      ?.response?.data?.detail ?? 'Could not save the bot configuration.'}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => saveConfigMutation.mutate()}
+                    disabled={saveConfigMutation.isPending || !token.trim()}
+                    className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                  >
+                    {saveConfigMutation.isPending ? 'Saving...' : 'Save bot'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditing(false)
+                      setToken('')
+                      setUsername('')
+                    }}
+                    className="text-gray-600 text-sm underline"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="bg-white rounded-lg shadow p-6 max-w-lg">
             <div className="flex items-center gap-3 mb-6">
               <span className={`w-3 h-3 rounded-full ${status?.connected ? 'bg-green-500' : 'bg-gray-300'}`} />
@@ -170,9 +285,14 @@ export default function TelegramSettingsPage() {
                 <p className="text-sm text-gray-500">
                   Connect your Telegram bot to process expenses and receipts from chat messages.
                 </p>
+                {!botConfig?.configured && (
+                  <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
+                    Set up the bot above first, then connect it to this company.
+                  </p>
+                )}
                 <button
                   onClick={() => connectMutation.mutate()}
-                  disabled={connectMutation.isPending}
+                  disabled={connectMutation.isPending || !botConfig?.configured}
                   className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
                 >
                   {connectMutation.isPending ? 'Connecting...' : 'Connect Telegram Bot'}

@@ -129,7 +129,7 @@ def test_webhook_conflict_does_not_advance_offset(tmp_path):
     assert offset_file.read_text() == "99"
 
 
-def test_missing_config_returns_1():
+def test_missing_webhook_url_returns_1():
     settings = _Settings()
-    settings.TELEGRAM_BOT_TOKEN = ""
+    settings.TELEGRAM_POLLING_INTERNAL_WEBHOOK_URL = ""
     assert asyncio.run(telegram_polling.run(settings=settings, max_cycles=1)) == 1

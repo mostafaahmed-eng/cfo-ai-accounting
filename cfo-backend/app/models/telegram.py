@@ -5,12 +5,31 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
+from app.core.crypto import decrypt_secret
 from app.models.base import BaseModel, TimestampMixin
+
+
+class TelegramBotConfig(BaseModel, TimestampMixin):
+    __tablename__ = "telegram_bot_config"
+
+    bot_username = Column(String(100), nullable=True)
+    bot_token_encrypted = Column(Text, nullable=True)
+    webhook_secret = Column(Text, nullable=True)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    updater = relationship("User", foreign_keys=[updated_by], lazy="noload")
+
+    @property
+    def bot_token(self) -> str | None:
+        if not self.bot_token_encrypted:
+            return None
+        return decrypt_secret(self.bot_token_encrypted)
 
 
 class TelegramConnection(BaseModel, TimestampMixin):

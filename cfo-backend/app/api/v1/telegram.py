@@ -33,6 +33,10 @@ from app.services.document_processing import (
 )
 from app.services.draft_editing import DraftEditActor, edit_draft
 from app.services.intake import create_text_inbox
+from app.services.telegram_bot_config import (
+    resolve_bot_token,
+    resolve_webhook_secret,
+)
 from app.services.telegram_draft_review import draft_review_message
 from app.services.telegram_edit_state import (
     TelegramEditState,
@@ -71,15 +75,15 @@ TELEGRAM_EDIT_PROMPTS = {
 }
 
 
-def _verify_webhook_secret(request: Request) -> None:
+async def _verify_webhook_secret(request: Request, db: AsyncSession) -> None:
     insecure_local = (
-        settings.ENVIRONMENT == "development"
-        and settings.TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK
+        settings.TELEGRAM_ALLOW_INSECURE_LOCAL_WEBHOOK
+        and settings.ENVIRONMENT != "production"
     )
     if insecure_local:
         return
 
-    expected = settings.TELEGRAM_WEBHOOK_SECRET
+    expected = await resolve_webhook_secret(db)
     if not expected:
         raise HTTPException(
             status_code=503, detail="Telegram webhook authentication is not configured"
@@ -162,7 +166,7 @@ async def telegram_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    _verify_webhook_secret(request)
+    await _verify_webhook_secret(request, db)
 
     body = await request.json()
     update_id = body.get("update_id")
@@ -416,7 +420,9 @@ async def telegram_webhook(
                     raise DocumentValidationError(
                         "file_too_large", "File exceeds upload limit"
                     )
-                content = await telegram_client.download_file(attachment["file_id"])
+                content = await telegram_client.download_file(
+                    attachment["file_id"], token=await resolve_bot_token(db)
+                )
                 validated = validate_content(content, attachment["mime_type"])
                 stored = await store_document_intake(
                     db,

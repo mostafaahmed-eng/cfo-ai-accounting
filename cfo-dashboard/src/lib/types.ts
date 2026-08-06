@@ -272,3 +272,10 @@ export interface TelegramStatus {
   pairing_link?: string | null
   pairing_expires_at?: string | null
 }
+
+export interface TelegramBotConfig {
+  configured: boolean
+  bot_username: string | null
+  has_token: boolean
+  verified_username?: string | null
+}

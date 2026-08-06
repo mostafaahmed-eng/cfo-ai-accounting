@@ -55,7 +55,7 @@ function waitForCompanyContext(): Promise<void> {
 }
 
 // Endpoints that do not depend on the selected company and must never block.
-const NON_COMPANY_PREFIXES = ['/auth/', '/companies']
+const NON_COMPANY_PREFIXES = ['/auth/', '/companies', '/integrations/telegram/bot-config']
 
 function requiresCompanyContext(url: string, token: string | null): boolean {
   if (!token) return false

@@ -16,6 +16,7 @@ import sys
 import httpx
 
 from app.config import get_settings
+from app.services.telegram_bot_config import get_telegram_config, make_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,22 @@ async def deliver_update_with_retry(
         await asyncio.sleep(RETRY_BACKOFF_SECONDS)
 
 
+async def _load_credentials(settings, factory) -> tuple[str, str]:
+    try:
+        async with factory() as session:
+            config = await get_telegram_config(session)
+            if config is not None:
+                token = config.bot_token or settings.TELEGRAM_BOT_TOKEN
+                secret = config.webhook_secret or settings.TELEGRAM_WEBHOOK_SECRET
+                return token, secret
+    except Exception:
+        logger.warning(
+            "Could not load telegram bot config from DB; using environment values",
+            exc_info=True,
+        )
+    return settings.TELEGRAM_BOT_TOKEN, settings.TELEGRAM_WEBHOOK_SECRET
+
+
 async def run(
     *,
     settings=None,
@@ -111,20 +128,10 @@ async def run(
     max_cycles: int | None = None,
 ) -> int:
     settings = settings or get_settings()
-    token = settings.TELEGRAM_BOT_TOKEN
-    secret = settings.TELEGRAM_WEBHOOK_SECRET
     webhook_url = settings.TELEGRAM_POLLING_INTERNAL_WEBHOOK_URL
-
-    missing = []
-    if not token:
-        missing.append("TELEGRAM_BOT_TOKEN")
-    if not secret:
-        missing.append("TELEGRAM_WEBHOOK_SECRET")
     if not webhook_url:
-        missing.append("TELEGRAM_POLLING_INTERNAL_WEBHOOK_URL")
-    if missing:
         logger.error(
-            "Polling worker is missing required config: %s", ", ".join(missing)
+            "Polling worker is missing required config: TELEGRAM_POLLING_INTERNAL_WEBHOOK_URL"
         )
         return 1
 
@@ -132,11 +139,12 @@ async def run(
     offset = load_offset(offset_path)
     logger.info("Telegram polling started (offset=%s, webhook=%s)", offset, webhook_url)
 
+    factory = make_session_factory()
     if client is not None:
         return await _run_loop(
             http=client,
-            token=token,
-            secret=secret,
+            settings=settings,
+            factory=factory,
             webhook_url=webhook_url,
             offset_path=offset_path,
             offset=offset,
@@ -146,8 +154,8 @@ async def run(
     async with httpx.AsyncClient(timeout=40.0) as http:
         return await _run_loop(
             http=http,
-            token=token,
-            secret=secret,
+            settings=settings,
+            factory=factory,
             webhook_url=webhook_url,
             offset_path=offset_path,
             offset=offset,
@@ -158,8 +166,8 @@ async def run(
 async def _run_loop(
     *,
     http: httpx.AsyncClient,
-    token: str,
-    secret: str,
+    settings,
+    factory,
     webhook_url: str,
     offset_path: str,
     offset: int,
@@ -171,6 +179,15 @@ async def _run_loop(
         cycles += 1
         if max_cycles is not None and cycles > max_cycles:
             return 0
+
+        token, secret = await _load_credentials(settings, factory)
+        if not token:
+            logger.error(
+                "No Telegram bot token configured. "
+                "Set it in Settings → Telegram on the dashboard."
+            )
+            await asyncio.sleep(RETRY_BACKOFF_SECONDS)
+            continue
 
         try:
             result = await fetch_updates(http, token, offset)
