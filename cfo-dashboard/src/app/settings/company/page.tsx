@@ -71,7 +71,7 @@ export default function CompanySettingsPage() {
               <button
                 onClick={() => createMutation.mutate()}
                 disabled={!form.name || !form.country_code || !form.base_currency || createMutation.isPending}
-                className="bg-blue-600 text-white px-6 py-2 rounded text-sm disabled:opacity-50"
+                className="bg-brand-600 text-white px-6 py-2 rounded text-sm disabled:opacity-50"
               >
                 {createMutation.isPending ? 'Creating...' : 'Create Company'}
               </button>

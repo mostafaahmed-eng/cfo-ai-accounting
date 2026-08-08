@@ -148,7 +148,7 @@ export default function TelegramSettingsPage() {
                     setEditing(true)
                     setUsername(botConfig?.bot_username ?? '')
                   }}
-                  className="border border-blue-600 text-blue-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-blue-50"
+                  className="border border-brand-600 text-brand-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-brand-50"
                 >
                   {botConfig?.configured ? 'Edit' : 'Set up'}
                 </button>
@@ -189,7 +189,7 @@ export default function TelegramSettingsPage() {
                   <button
                     onClick={() => saveConfigMutation.mutate()}
                     disabled={saveConfigMutation.isPending || !token.trim()}
-                    className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                    className="bg-brand-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
                   >
                     {saveConfigMutation.isPending ? 'Saving...' : 'Save bot'}
                   </button>
@@ -242,11 +242,11 @@ export default function TelegramSettingsPage() {
                   href={pairing.pairing_link ?? '#'}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded text-center"
+                  className="inline-flex items-center justify-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-semibold px-6 py-3 rounded text-center"
                 >
                   Open Telegram
                 </a>
-                <div className="rounded border border-blue-200 bg-blue-50 p-4 text-sm">
+                <div className="rounded border border-brand-200 bg-brand-50 p-4 text-sm">
                   <div className="flex items-center justify-between gap-2">
                     <p className="font-medium">One-time pairing code</p>
                     {countdown === 'expired' ? (
@@ -261,7 +261,7 @@ export default function TelegramSettingsPage() {
                     </code>
                     <button
                       onClick={copyCode}
-                      className="shrink-0 border border-blue-600 text-blue-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-blue-50"
+                      className="shrink-0 border border-brand-600 text-brand-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-brand-50"
                     >
                       {copied ? 'Copied!' : 'Copy'}
                     </button>
@@ -275,7 +275,7 @@ export default function TelegramSettingsPage() {
                 <button
                   onClick={() => connectMutation.mutate()}
                   disabled={connectMutation.isPending}
-                  className="text-blue-700 text-sm underline disabled:opacity-50"
+                  className="text-brand-700 text-sm underline disabled:opacity-50"
                 >
                   Generate a new pairing link
                 </button>
@@ -293,9 +293,9 @@ export default function TelegramSettingsPage() {
                 <button
                   onClick={() => connectMutation.mutate()}
                   disabled={connectMutation.isPending || !botConfig?.configured}
-                  className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
-                >
-                  {connectMutation.isPending ? 'Connecting...' : 'Connect Telegram Bot'}
+className="bg-brand-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                  >
+                    {connectMutation.isPending ? 'Connecting...' : 'Connect Telegram Bot'}
                 </button>
                 {connectMutation.isError && (
                   <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">

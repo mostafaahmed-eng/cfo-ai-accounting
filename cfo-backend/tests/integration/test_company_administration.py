@@ -504,3 +504,348 @@ async def test_company_list_contains_only_current_users_active_memberships(
             "role": "ADMIN",
         }
     ]
+
+
+async def test_get_company_detail_scoped_to_membership(client, db_session):
+    (
+        company,
+        owner,
+        _,
+        member,
+        _,
+        _,
+        _,
+    ) = await _administration_fixture(db_session)
+
+    owner_detail = await client.get(
+        f"/api/v1/companies/{company.id}",
+        headers=_headers(owner.id, company.id),
+    )
+    member_detail = await client.get(
+        f"/api/v1/companies/{company.id}",
+        headers=_headers(member.id, company.id),
+    )
+
+    assert owner_detail.status_code == 200
+    assert owner_detail.json()["id"] == str(company.id)
+    assert member_detail.status_code == 200
+
+
+async def test_get_company_detail_foreign_company_rejected(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+    foreign = _company(f"Foreign Detail {uuid4().hex[:6]}")
+    stranger = _user(f"stranger-detail-{uuid4().hex[:6]}@example.com")
+    db_session.add_all([foreign, stranger])
+    await db_session.flush()
+
+    response = await client.get(
+        f"/api/v1/companies/{foreign.id}",
+        headers=_headers(stranger.id, foreign.id),
+    )
+    assert response.status_code == 403
+
+
+async def test_update_company_requires_admin(client, db_session):
+    company, _, admin, member, _, _, _ = await _administration_fixture(db_session)
+
+    member_update = await client.patch(
+        f"/api/v1/companies/{company.id}",
+        json={"name": "Hacked"},
+        headers=_headers(member.id, company.id),
+    )
+    assert member_update.status_code == 403
+
+    valid_update = await client.patch(
+        f"/api/v1/companies/{company.id}",
+        json={"name": "Renamed Co", "country_code": "CA"},
+        headers=_headers(admin.id, company.id),
+    )
+    assert valid_update.status_code == 200
+    assert valid_update.json()["name"] == "Renamed Co"
+    assert valid_update.json()["country_code"] == "CA"
+
+
+async def test_list_company_members_owner_and_admin(client, db_session):
+    company, owner, admin, member, _, _, _ = await _administration_fixture(db_session)
+
+    owner_list = await client.get(
+        f"/api/v1/companies/{company.id}/members",
+        headers=_headers(owner.id, company.id),
+    )
+    admin_list = await client.get(
+        f"/api/v1/companies/{company.id}/members",
+        headers=_headers(admin.id, company.id),
+    )
+
+    assert owner_list.status_code == 200
+    body = owner_list.json()
+    assert len(body) == 3
+    by_email = {item["email"]: item for item in body}
+    assert by_email[owner.email]["role"] == "OWNER"
+    assert by_email[owner.email]["status"] == "active"
+    assert by_email[admin.email]["role"] == "ADMIN"
+    assert by_email[member.email]["role"] == "ACCOUNTANT"
+    assert owner_list.headers["X-Total-Count"] == "3"
+    assert admin_list.status_code == 200
+
+
+async def test_list_members_forbidden_for_non_admin(client, db_session):
+    company, _, _, member, _, _, _ = await _administration_fixture(db_session)
+
+    response = await client.get(
+        f"/api/v1/companies/{company.id}/members",
+        headers=_headers(member.id, company.id),
+    )
+    assert response.status_code == 403
+
+
+async def test_list_members_requires_auth(client):
+    company_id = uuid4()
+    response = await client.get(
+        f"/api/v1/companies/{company_id}/members",
+    )
+    assert response.status_code == 401
+
+
+async def test_list_members_foreign_company_forbidden(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+    unaware = _company(f"Unaware {uuid4().hex[:6]}")
+    stranger = _user(f"multer-{uuid4().hex[:6]}@example.com")
+    stranger_membership = _membership(stranger, unaware, "VIEWER")
+    db_session.add_all([unaware, stranger, stranger_membership])
+    await db_session.flush()
+
+    response = await client.get(
+        f"/api/v1/companies/{company.id}/members",
+        headers=_headers(stranger.id, unaware.id),
+    )
+    assert response.status_code == 403
+
+
+async def test_list_invitations_shows_pending_and_expired(client, db_session):
+    company, owner, admin, _, _, _, _ = await _administration_fixture(db_session)
+    invite = await client.post(
+        f"/api/v1/companies/{company.id}/invitations",
+        json={"email": "guest@example.com", "role": "VIEWER"},
+        headers=_headers(owner.id, company.id),
+    )
+    assert invite.status_code == 200
+
+    response = await client.get(
+        f"/api/v1/companies/{company.id}/invitations",
+        headers=_headers(owner.id, company.id),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["email"] == "guest@example.com"
+    assert body[0]["status"] in ("pending", "expired")
+    assert response.headers["X-Total-Count"] == "1"
+
+
+async def test_list_invitations_forbidden_role(client, db_session):
+    company, _, _, member, _, _, _ = await _administration_fixture(db_session)
+
+    response = await client.get(
+        f"/api/v1/companies/{company.id}/invitations",
+        headers=_headers(member.id, company.id),
+    )
+    assert response.status_code == 403
+
+
+async def test_list_invitations_foreign_company(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+    other = _company(f"Invites Foreign {uuid4().hex[:6]}")
+    other_owner = _user(f"invites-owner-{uuid4().hex[:6]}@example.com")
+    db_session.add_all([other, other_owner, _membership(other_owner, other, "OWNER")])
+    await db_session.flush()
+
+    response = await client.get(
+        f"/api/v1/companies/{other.id}/invitations",
+        headers=_headers(owner.id, company.id),
+    )
+    assert response.status_code == 403
+
+
+async def test_remove_empty_invitation_list(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+    response = await client.get(
+        f"/api/v1/companies/{company.id}/invitations",
+        headers=_headers(owner.id, company.id),
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+    assert response.headers["X-Total-Count"] == "0"
+
+
+async def test_remove_member_admin_removes_non_owner(client, db_session):
+    company, owner, admin, _, _, _, member_membership = await _administration_fixture(
+        db_session
+    )
+
+    response = await client.delete(
+        f"/api/v1/companies/{company.id}/members/{member_membership.id}",
+        headers=_headers(admin.id, company.id),
+    )
+    assert response.status_code == 200
+    remaining = await db_session.execute(
+        select(CompanyMember).where(CompanyMember.company_id == company.id)
+    )
+    ids = [str(m.id) for m in remaining.scalars().all()]
+    assert str(member_membership.id) not in ids
+
+
+async def test_remove_member_forbidden_role(client, db_session):
+    company, _, _, member, _, _, other_member = await _administration_fixture(
+        db_session
+    )
+
+    response = await client.delete(
+        f"/api/v1/companies/{company.id}/members/{other_member.id}",
+        headers=_headers(member.id, company.id),
+    )
+    assert response.status_code == 403
+
+
+async def test_remove_member_foreign_company(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+    other = _company(f"Remove Foreign {uuid4().hex[:6]}")
+    other_owner = _user(f"remove-owner-{uuid4().hex[:6]}@example.com")
+    other_owner_membership = _membership(other_owner, other, "OWNER")
+    db_session.add_all([other, other_owner, other_owner_membership])
+    await db_session.flush()
+
+    response = await client.delete(
+        f"/api/v1/companies/{other.id}/members/{other_owner_membership.id}",
+        headers=_headers(owner.id, company.id),
+    )
+    assert response.status_code == 403
+    remaining = await db_session.execute(
+        select(CompanyMember).where(CompanyMember.company_id == other.id)
+    )
+    assert [str(m.id) for m in remaining.scalars().all()] == [
+        str(other_owner_membership.id)
+    ]
+
+
+async def test_remove_last_owner_rejected(client, db_session):
+    company = _company(f"Remove Last {uuid4().hex[:6]}")
+    owner = _user(f"remove-last-{uuid4().hex[:6]}@example.com")
+    membership = _membership(owner, company, "OWNER")
+    db_session.add_all([company, owner, membership])
+    await db_session.flush()
+
+    response = await client.delete(
+        f"/api/v1/companies/{company.id}/members/{membership.id}",
+        headers=_headers(owner.id, company.id),
+    )
+    assert response.status_code in (403, 409)
+
+
+async def test_remove_owner_by_admin_forbidden(client, db_session):
+    company, _, admin, _, owner_membership, _, _ = await _administration_fixture(
+        db_session
+    )
+
+    response = await client.delete(
+        f"/api/v1/companies/{company.id}/members/{owner_membership.id}",
+        headers=_headers(admin.id, company.id),
+    )
+    assert response.status_code == 403
+
+
+async def test_remove_nonexistent_member_404(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+
+    response = await client.delete(
+        f"/api/v1/companies/{company.id}/members/{uuid4()}",
+        headers=_headers(owner.id, company.id),
+    )
+    assert response.status_code in (403, 404)
+
+
+async def test_revoke_invitation(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+    invite = await client.post(
+        f"/api/v1/companies/{company.id}/invitations",
+        json={"email": "revoke@example.com", "role": "VIEWER"},
+        headers=_headers(owner.id, company.id),
+    )
+    assert invite.status_code == 200
+    invitation_id = invite.json()["id"]
+
+    response = await client.delete(
+        f"/api/v1/companies/{company.id}/invitations/{invitation_id}",
+        headers=_headers(owner.id, company.id),
+    )
+    assert response.status_code == 200
+
+    row = await db_session.execute(
+        select(Invitation).where(Invitation.id == invitation_id)
+    )
+    assert row.scalar_one().status == "revoked"
+
+
+async def test_revoke_invitation_forbidden_role(client, db_session):
+    company, _, admin, member, _, _, _ = await _administration_fixture(db_session)
+    invite = await client.post(
+        f"/api/v1/companies/{company.id}/invitations",
+        json={"email": "revoke2@example.com", "role": "VIEWER"},
+        headers=_headers(admin.id, company.id),
+    )
+    assert invite.status_code == 200
+    invitation_id = invite.json()["id"]
+
+    response = await client.delete(
+        f"/api/v1/companies/{company.id}/invitations/{invitation_id}",
+        headers=_headers(member.id, company.id),
+    )
+    assert response.status_code == 403
+
+
+async def test_revoke_invitation_foreign_company(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+    other = _company(f"Revoke Foreign {uuid4().hex[:6]}")
+    other_owner = _user(f"revoke-owner-{uuid4().hex[:6]}@example.com")
+    db_session.add_all([other, other_owner, _membership(other_owner, other, "OWNER")])
+    await db_session.flush()
+
+    response = await client.delete(
+        f"/api/v1/companies/{other.id}/invitations/{uuid4()}",
+        headers=_headers(owner.id, company.id),
+    )
+    assert response.status_code == 403
+    rows = await db_session.execute(
+        select(Invitation).where(Invitation.company_id == other.id)
+    )
+    assert rows.scalars().all() == []
+
+
+async def test_revoke_invitation_nonexistent(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+
+    response = await client.delete(
+        f"/api/v1/companies/{company.id}/invitations/{uuid4()}",
+        headers=_headers(owner.id, company.id),
+    )
+    assert response.status_code in (403, 404)
+
+
+async def test_revoke_invitation_already_revoked(client, db_session):
+    company, owner, _, _, _, _, _ = await _administration_fixture(db_session)
+    invite = await client.post(
+        f"/api/v1/companies/{company.id}/invitations",
+        json={"email": "double-revoke@example.com", "role": "VIEWER"},
+        headers=_headers(owner.id, company.id),
+    )
+    invitation_id = invite.json()["id"]
+    first = await client.delete(
+        f"/api/v1/companies/{company.id}/invitations/{invitation_id}",
+        headers=_headers(owner.id, company.id),
+    )
+    second = await client.delete(
+        f"/api/v1/companies/{company.id}/invitations/{invitation_id}",
+        headers=_headers(owner.id, company.id),
+    )
+    assert first.status_code == 200
+    assert second.status_code == 400

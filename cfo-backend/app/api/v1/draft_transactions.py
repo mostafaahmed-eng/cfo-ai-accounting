@@ -206,7 +206,7 @@ async def reject_draft(
 )
 async def request_clarification(
     draft_id: str,
-    data: ClarificationRequest,
+    data: ClarificationRequest | None = None,
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
     membership: CompanyMember = Depends(get_current_company_membership),

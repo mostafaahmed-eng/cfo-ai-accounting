@@ -177,6 +177,31 @@ export default function TransactionDetailPage() {
     },
   })
 
+  const clarificationMutation = useMutation({
+    mutationFn: async () => {
+      setApprovalError('')
+      const { data } = await apiClient.post(
+        `/draft-transactions/${id}/request-clarification`,
+      )
+      return data
+    },
+    onSuccess: (updated: DraftTransaction) => {
+      queryClient.setQueryData(
+        ['draft-transaction', selectedCompanyId, id],
+        updated,
+      )
+      queryClient.invalidateQueries({
+        queryKey: ['draft-transactions'],
+      })
+      setApprovalError('')
+    },
+    onError: (error: { response?: { data?: { detail?: string } } }) => {
+      setApprovalError(
+        error.response?.data?.detail || 'Failed to request clarification',
+      )
+    },
+  })
+
   const categoryAccounts = accounts.filter((account) => {
     if (!account.is_active || account.is_payment_account) return false
     if (transaction?.type === 'income') return account.type === 'revenue'
@@ -216,7 +241,7 @@ export default function TransactionDetailPage() {
                         setSaveMessage('')
                         setEditMode(true)
                       }}
-                      className="text-blue-600 hover:underline text-sm"
+                      className="text-brand-600 hover:underline text-sm"
                     >
                       Edit
                     </button>
@@ -300,7 +325,7 @@ export default function TransactionDetailPage() {
                     <button
                       onClick={() => updateMutation.mutate(form)}
                       disabled={!hasUnsavedChanges || updateMutation.isPending}
-                      className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                      className="bg-brand-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
                     >
                       {updateMutation.isPending ? 'Saving…' : 'Save corrections'}
                     </button>
@@ -342,7 +367,7 @@ export default function TransactionDetailPage() {
                     <div className="space-y-4 border-t pt-4">
                       <p className="font-medium">Accounting review</p>
                       {extractions[0]?.validated_result?.category_hint && (
-                        <p className="rounded bg-blue-50 p-3 text-blue-800">
+                        <p className="rounded bg-brand-50 p-3 text-brand-800">
                           AI category suggestion: {extractions[0].validated_result.category_hint}
                         </p>
                       )}
@@ -383,13 +408,30 @@ export default function TransactionDetailPage() {
                         </select>
                       </div>
                       {approvalError && <p className="text-sm text-red-700">{approvalError}</p>}
-                      <button
-                        onClick={() => approveMutation.mutate()}
-                        disabled={!categoryAccountId || !paymentAccountId || approveMutation.isPending}
-                        className="bg-green-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
-                      >
-                        {approveMutation.isPending ? 'Approving…' : 'Approve and post'}
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => approveMutation.mutate()}
+                          disabled={!categoryAccountId || !paymentAccountId || approveMutation.isPending}
+                          className="bg-green-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                        >
+                          {approveMutation.isPending ? 'Approving…' : 'Approve and post'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                'Request clarification from the submitter? The draft will move back for corrections.',
+                              )
+                            ) {
+                              clarificationMutation.mutate()
+                            }
+                          }}
+                          disabled={clarificationMutation.isPending}
+                          className="bg-amber-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                        >
+                          {clarificationMutation.isPending ? 'Requesting…' : 'Request clarification'}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

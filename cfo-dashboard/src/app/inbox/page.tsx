@@ -35,13 +35,13 @@ export default function InboxPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => setView('active')}
-                className={`px-3 py-2 rounded text-sm ${view === 'active' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}
+                className={`px-3 py-2 rounded text-sm ${view === 'active' ? 'bg-brand-600 text-white' : 'bg-gray-100'}`}
               >
                 Active
               </button>
               <button
                 onClick={() => setView('archived')}
-                className={`px-3 py-2 rounded text-sm ${view === 'archived' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}
+                className={`px-3 py-2 rounded text-sm ${view === 'archived' ? 'bg-brand-600 text-white' : 'bg-gray-100'}`}
               >
                 Archived
               </button>

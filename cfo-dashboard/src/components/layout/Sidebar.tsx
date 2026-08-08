@@ -10,6 +10,7 @@ const links = [
   { href: '/accounts', label: 'Accounts' },
   { href: '/vendors', label: 'Vendors' },
   { href: '/budgets', label: 'Budgets' },
+  { href: '/exchange-rates', label: 'Exchange Rates' },
   { href: '/reports/profit-and-loss', label: 'P&L' },
   { href: '/reports/cash-flow', label: 'Cash Flow' },
   { href: '/reports/balance-sheet', label: 'Balance Sheet' },
@@ -23,17 +24,20 @@ export default function Sidebar() {
   const pathname = usePathname()
 
   return (
-    <aside className="w-64 bg-gray-900 text-white min-h-screen p-4">
-      <h1 className="text-xl font-bold mb-6">AI CFO</h1>
+    <aside className="w-64 bg-white border-r border-brand-200 min-h-screen p-4">
+      <h1 className="text-xl font-bold mb-6">
+        <span className="text-brand-600">AI</span>{" "}
+        <span className="text-gray-900">CFO</span>
+      </h1>
       <nav className="space-y-1">
         {links.map((link) => (
           <Link
             key={link.href}
             href={link.href}
-            className={`block px-3 py-2 rounded text-sm ${
+            className={`block px-3 py-2 rounded-lg text-sm transition-colors ${
               pathname === link.href
-                ? 'bg-gray-700 text-white'
-                : 'text-gray-300 hover:bg-gray-800'
+                ? 'bg-brand-100 text-brand-700 font-medium'
+                : 'text-gray-600 hover:bg-brand-50 hover:text-gray-900'
             }`}
           >
             {link.label}

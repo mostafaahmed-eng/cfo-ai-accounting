@@ -92,3 +92,56 @@ async def authorize_member_update(
                 detail="The last active owner cannot be changed",
             )
     return target
+
+
+async def authorize_member_removal(
+    db: AsyncSession,
+    *,
+    actor: CompanyMember,
+    target: CompanyMember,
+) -> CompanyMember:
+    """Authorize and locate a member being removed (hard delete / uninvited).
+
+    Follows the same rules as updates:
+    - Only a company administrator may remove members.
+    - Only an OWNER may remove another OWNER.
+    - The last active owner can never be removed (409).
+    """
+    require_company_administrator(actor, target.company_id)
+
+    active_owners = await lock_active_owners(db, target.company_id)
+    actor = (
+        await db.execute(
+            select(CompanyMember)
+            .where(
+                CompanyMember.id == actor.id,
+                CompanyMember.company_id == target.company_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one()
+    target = (
+        await db.execute(
+            select(CompanyMember)
+            .where(
+                CompanyMember.id == target.id,
+                CompanyMember.company_id == target.company_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one()
+    require_company_administrator(actor, target.company_id)
+
+    if target.role == "OWNER" and actor.role != "OWNER":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an owner may remove an owner",
+        )
+
+    if target.role == "OWNER" and target.status == "active":
+        if len(active_owners) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The last active owner cannot be changed",
+            )
+    return target

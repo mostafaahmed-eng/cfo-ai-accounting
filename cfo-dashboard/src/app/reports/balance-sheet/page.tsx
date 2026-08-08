@@ -38,7 +38,7 @@ export default function BalanceSheetPage() {
               <p className="text-sm text-gray-500 mb-4">As of: {bs.as_of}</p>
               <div className="space-y-6">
                 <div>
-                  <h3 className="font-semibold text-blue-700 mb-2">Assets</h3>
+                  <h3 className="font-semibold text-brand-700 mb-2">Assets</h3>
                   {bs.assets.length === 0 ? (
                     <p className="text-sm text-gray-500">No assets</p>
                   ) : bs.assets.map((item, i) => (

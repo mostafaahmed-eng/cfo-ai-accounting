@@ -43,7 +43,7 @@ export default function QuickCapture() {
           onClick={() => mutation.mutate()}
           disabled={!companyReady || !text || mutation.isPending}
           title={companyReady ? undefined : 'Waiting for company context...'}
-          className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+          className="bg-brand-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
         >
           {mutation.isPending ? 'Submitting...' : 'Submit'}
         </button>

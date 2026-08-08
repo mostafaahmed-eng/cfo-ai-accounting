@@ -27,6 +27,37 @@ export interface CompanyMembership {
   role: 'OWNER' | 'ADMIN' | 'ACCOUNTANT' | 'APPROVER' | 'VIEWER'
 }
 
+export interface CompanyMember {
+  id: string
+  company_id: string
+  user_id: string
+  email: string
+  name: string
+  role: 'OWNER' | 'ADMIN' | 'ACCOUNTANT' | 'APPROVER' | 'VIEWER'
+  status: 'active' | 'invited' | 'disabled'
+  joined_at: string
+}
+
+export interface CompanyInvitation {
+  id: string
+  company_id: string
+  email: string
+  role: 'OWNER' | 'ADMIN' | 'ACCOUNTANT' | 'APPROVER' | 'VIEWER'
+  status: 'pending' | 'accepted' | 'expired' | 'revoked'
+  invited_by: string
+  expires_at: string
+  created_at: string
+}
+
+export interface InvitationResponse {
+  id: string
+  company_id: string
+  email: string
+  role: 'OWNER' | 'ADMIN' | 'ACCOUNTANT' | 'APPROVER' | 'VIEWER'
+  status: string
+  joined_at: string
+}
+
 export interface Account {
   id: string
   company_id: string
@@ -198,6 +229,14 @@ export interface ExchangeRate {
   rate_date: string
   source: string
   created_at: string
+}
+
+export interface ExchangeRateCreate {
+  base_currency: string
+  quote_currency: string
+  rate: number
+  rate_date: string
+  source: string
 }
 
 export interface DashboardData {

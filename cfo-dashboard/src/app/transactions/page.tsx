@@ -64,7 +64,7 @@ export default function TransactionsPage() {
                     <tr key={tx.id} className="border-b hover:bg-gray-50">
                       <td className="p-4 text-sm">{tx.transaction_date}</td>
                       <td className="p-4 text-sm">
-                        <Link href={`/transactions/${tx.id}`} className="text-blue-600 hover:underline">
+                        <Link href={`/transactions/${tx.id}`} className="text-brand-600 hover:underline">
                           {tx.description}
                         </Link>
                       </td>

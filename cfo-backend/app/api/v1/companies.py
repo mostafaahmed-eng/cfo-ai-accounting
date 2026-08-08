@@ -3,13 +3,13 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_company_membership, get_current_user
-from app.enums import AccountType, UserRole
+from app.enums import AccountType, MemberStatus, UserRole
 from app.models.account import Account
 from app.models.company import Company, CompanyMember
 from app.models.invitation import Invitation
@@ -18,13 +18,18 @@ from app.schemas.company import (
     CompanyCreate,
     CompanyMembershipResponse,
     CompanyResponse,
+    CompanyUpdate,
     InvitationCreate,
+    InvitationDetailResponse,
     InvitationResponse,
+    MemberDetailResponse,
     MemberResponse,
     MemberUpdate,
 )
+from app.schemas.pagination import PageParams, get_page_params
 from app.services.audit import create_audit_log
 from app.services.company_authorization import (
+    authorize_member_removal,
     authorize_member_update,
     require_company_administrator,
 )
@@ -183,6 +188,73 @@ async def list_company_memberships(
     ]
 
 
+@router.get("/{company_id}", response_model=CompanyResponse)
+async def get_company_detail(
+    company_id: UUID,
+    user: User = Depends(get_current_user),
+    membership: CompanyMember = Depends(get_current_company_membership),
+    db: AsyncSession = Depends(get_db),
+):
+    if membership.company_id != company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Company administrator access required",
+        )
+    company = await db.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return CompanyResponse.model_validate(company)
+
+
+@router.patch("/{company_id}", response_model=CompanyResponse)
+async def update_company(
+    company_id: UUID,
+    data: CompanyUpdate,
+    user: User = Depends(get_current_user),
+    actor: CompanyMember = Depends(get_current_company_membership),
+    db: AsyncSession = Depends(get_db),
+):
+    require_company_administrator(actor, company_id)
+    company = await db.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    before = {
+        "name": company.name,
+        "legal_name": company.legal_name,
+        "country_code": company.country_code,
+        "fiscal_year_start": company.fiscal_year_start,
+        "timezone": company.timezone,
+        "tax_number": company.tax_number,
+    }
+
+    changes = data.model_dump(exclude_unset=True)
+    for field, value in changes.items():
+        setattr(company, field, value)
+    await db.flush()
+
+    after = {
+        "name": company.name,
+        "legal_name": company.legal_name,
+        "country_code": company.country_code,
+        "fiscal_year_start": company.fiscal_year_start,
+        "timezone": company.timezone,
+        "tax_number": company.tax_number,
+    }
+    await create_audit_log(
+        db=db,
+        company_id=str(company_id),
+        user_id=str(user.id),
+        actor_type="user",
+        action="company.updated",
+        entity_type="company",
+        entity_id=str(company.id),
+        before_data=before,
+        after_data=after,
+    )
+    return CompanyResponse.model_validate(company)
+
+
 @router.post("/{company_id}/invitations", response_model=InvitationResponse)
 async def invite_member(
     company_id: UUID,
@@ -299,3 +371,169 @@ async def update_member(
             after_data=after,
         )
     return MemberResponse.model_validate(member)
+
+
+@router.get("/{company_id}/members", response_model=list[MemberDetailResponse])
+async def list_company_members(
+    company_id: UUID,
+    user: User = Depends(get_current_user),
+    actor: CompanyMember = Depends(get_current_company_membership),
+    db: AsyncSession = Depends(get_db),
+    response: Response = None,
+    page: PageParams = Depends(get_page_params),
+):
+    require_company_administrator(actor, company_id)
+    filters = (CompanyMember.company_id == company_id,)
+    total = await db.scalar(
+        select(func.count()).select_from(CompanyMember).where(*filters)
+    )
+    result = await db.execute(
+        select(CompanyMember, User)
+        .join(User, User.id == CompanyMember.user_id)
+        .where(*filters)
+        .order_by(CompanyMember.joined_at, CompanyMember.id)
+        .offset(page.offset)
+        .limit(page.limit)
+    )
+    response.headers["X-Total-Count"] = str(total)
+    members = []
+    for membership, user_row in result.all():
+        members.append(
+            MemberDetailResponse(
+                id=membership.id,
+                company_id=membership.company_id,
+                user_id=membership.user_id,
+                email=user_row.email,
+                name=user_row.name,
+                role=UserRole(membership.role),
+                status=MemberStatus(membership.status),
+                joined_at=membership.joined_at,
+            )
+        )
+    return members
+
+
+@router.get("/{company_id}/invitations", response_model=list[InvitationDetailResponse])
+async def list_company_invitations(
+    company_id: UUID,
+    user: User = Depends(get_current_user),
+    actor: CompanyMember = Depends(get_current_company_membership),
+    db: AsyncSession = Depends(get_db),
+    response: Response = None,
+    page: PageParams = Depends(get_page_params),
+):
+    require_company_administrator(actor, company_id)
+    filters = (Invitation.company_id == company_id,)
+    total = await db.scalar(
+        select(func.count()).select_from(Invitation).where(*filters)
+    )
+    result = await db.execute(
+        select(Invitation)
+        .where(*filters)
+        .order_by(Invitation.created_at.desc(), Invitation.id)
+        .offset(page.offset)
+        .limit(page.limit)
+    )
+    response.headers["X-Total-Count"] = str(total)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    invitations = []
+    for inv in result.scalars().all():
+        status = inv.status
+        if status == "pending" and inv.expires_at.replace(tzinfo=None) < now:
+            status = "expired"
+        invitations.append(
+            InvitationDetailResponse(
+                id=inv.id,
+                company_id=inv.company_id,
+                email=inv.email,
+                role=UserRole(inv.role),
+                status=status,
+                invited_by=inv.invited_by,
+                expires_at=inv.expires_at,
+                created_at=inv.created_at,
+            )
+        )
+    return invitations
+
+
+@router.delete("/{company_id}/members/{member_id}", response_model=MemberResponse)
+async def remove_member(
+    company_id: UUID,
+    member_id: UUID,
+    user: User = Depends(get_current_user),
+    actor: CompanyMember = Depends(get_current_company_membership),
+    db: AsyncSession = Depends(get_db),
+):
+    require_company_administrator(actor, company_id)
+    result = await db.execute(
+        select(CompanyMember).where(
+            CompanyMember.id == member_id,
+            CompanyMember.company_id == company_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    member = await authorize_member_removal(db, actor=actor, target=member)
+
+    removed = MemberResponse(
+        id=member.id,
+        company_id=member.company_id,
+        user_id=member.user_id,
+        role=UserRole(member.role),
+        status=MemberStatus(member.status),
+        joined_at=member.joined_at,
+    )
+    await db.delete(member)
+    await db.flush()
+    await create_audit_log(
+        db=db,
+        company_id=str(company_id),
+        user_id=str(user.id),
+        actor_type="user",
+        action="member.removed",
+        entity_type="company_member",
+        entity_id=str(member_id),
+        before_data={"role": removed.role.value, "status": removed.status.value},
+    )
+    return removed
+
+
+@router.delete("/{company_id}/invitations/{invitation_id}")
+async def revoke_invitation(
+    company_id: UUID,
+    invitation_id: UUID,
+    user: User = Depends(get_current_user),
+    actor: CompanyMember = Depends(get_current_company_membership),
+    db: AsyncSession = Depends(get_db),
+):
+    require_company_administrator(actor, company_id)
+    result = await db.execute(
+        select(Invitation).where(
+            Invitation.id == invitation_id,
+            Invitation.company_id == company_id,
+        )
+    )
+    invitation = result.scalar_one_or_none()
+    if not invitation:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+    if invitation.status != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail="Only pending invitations can be revoked",
+        )
+    invitation.status = "revoked"
+    await db.flush()
+    await create_audit_log(
+        db=db,
+        company_id=str(company_id),
+        user_id=str(user.id),
+        actor_type="user",
+        action="invitation.revoked",
+        entity_type="invitation",
+        entity_id=str(invitation.id),
+        before_data={"status": "pending"},
+        after_data={"status": "revoked"},
+    )
+    return {"message": "Invitation revoked"}
