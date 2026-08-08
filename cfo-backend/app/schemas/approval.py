@@ -4,10 +4,6 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
-class ApprovalAction(BaseModel):
-    comment: str | None = None
-
-
 class ApprovalResponse(BaseModel):
     id: UUID
     company_id: UUID

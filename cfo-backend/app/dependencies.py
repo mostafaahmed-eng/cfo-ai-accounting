@@ -51,6 +51,11 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+    if payload.get("ver") != getattr(user, "token_version", 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session invalidated; please sign in again",
+        )
     return user
 
 
@@ -121,3 +126,22 @@ async def get_current_company_id(
     membership: CompanyMember = Depends(get_current_company_membership),
 ) -> UUID:
     return membership.company_id
+
+
+def is_platform_admin(user: User) -> bool:
+    configured = get_settings().PLATFORM_ADMIN_EMAILS or ""
+    allowed = {
+        email.strip().lower() for email in configured.split(",") if email.strip()
+    }
+    return (user.email or "").strip().lower() in allowed
+
+
+async def get_platform_admin_user(
+    user: User = Depends(get_current_user),
+) -> User:
+    if not is_platform_admin(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform administrator access required",
+        )
+    return user

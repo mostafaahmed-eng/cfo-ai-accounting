@@ -37,9 +37,8 @@ What happens, step by step:
    then runs `alembic upgrade head` to apply all migrations, and finally starts
    `uvicorn app.main:app --reload` on port **8000**.
 4. **celery-worker** builds the same Python image, then starts a Celery worker
-   listening on all 7 queues: `receipt-processing`, `ai-extraction`,
-   `duplicate-detection`, `telegram-responses`, `journal-posting`,
-   `report-generation`, `notifications`.
+   listening on all 3 queues: `receipt-processing`, `ai-extraction`,
+   `telegram-responses`.
 5. **frontend** builds the Node.js image (`npm ci` from lockfile + `npm run dev`) and starts
    Next.js on port **3000**.
 

@@ -3,7 +3,7 @@ import secrets
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -164,6 +164,7 @@ async def _telegram_edit_patch(
 @limiter.limit(settings.RATE_LIMIT_WEBHOOK)
 async def telegram_webhook(
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     await _verify_webhook_secret(request, db)

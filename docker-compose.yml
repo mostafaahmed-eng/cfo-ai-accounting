@@ -128,7 +128,7 @@ services:
     command: >
       celery -A app.tasks.celery_app:celery_app worker
       --loglevel=info
-      --queues=receipt-processing,ai-extraction,duplicate-detection,telegram-responses,journal-posting,report-generation,notifications
+      --queues=receipt-processing,ai-extraction,telegram-responses
     volumes:
       - ./cfo-backend:/app
 

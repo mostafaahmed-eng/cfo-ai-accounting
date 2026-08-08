@@ -3,7 +3,7 @@
 import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery } from '@tanstack/react-query'
-import apiClient from '@/lib/api-client'
+import apiClient, { fetchAll } from '@/lib/api-client'
 import { useCompany } from '@/contexts/CompanyContext'
 import type { Budget } from '@/lib/types'
 
@@ -11,10 +11,7 @@ export default function BudgetsPage() {
   const { selectedCompanyId } = useCompany()
   const { data: budgets, isLoading } = useQuery<Budget[]>({
     queryKey: ['budgets', selectedCompanyId],
-    queryFn: async () => {
-      const { data } = await apiClient.get('/budgets')
-      return data
-    },
+    queryFn: () => fetchAll<Budget>('/budgets'),
     enabled: Boolean(selectedCompanyId),
   })
 

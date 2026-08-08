@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -7,6 +7,7 @@ from app.dependencies import get_current_company_id, get_current_user
 from app.models.approval import ApprovalRequest
 from app.models.user import User
 from app.schemas.approval import ApprovalResponse
+from app.schemas.pagination import PageParams, get_page_params
 
 router = APIRouter()
 
@@ -16,15 +17,24 @@ async def list_approvals(
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
+    response: Response = None,
+    page: PageParams = Depends(get_page_params),
 ):
+    filters = (
+        ApprovalRequest.company_id == company_id,
+        ApprovalRequest.status == "pending",
+    )
+    total = await db.scalar(
+        select(func.count()).select_from(ApprovalRequest).where(*filters)
+    )
     result = await db.execute(
         select(ApprovalRequest)
-        .where(
-            ApprovalRequest.company_id == company_id,
-            ApprovalRequest.status == "pending",
-        )
+        .where(*filters)
         .order_by(ApprovalRequest.created_at.desc())
+        .offset(page.offset)
+        .limit(page.limit)
     )
+    response.headers["X-Total-Count"] = str(total)
     return [ApprovalResponse.model_validate(a) for a in result.scalars().all()]
 
 

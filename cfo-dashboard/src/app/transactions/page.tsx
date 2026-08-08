@@ -3,7 +3,7 @@
 import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import apiClient from '@/lib/api-client'
+import apiClient, { fetchAll } from '@/lib/api-client'
 import { useCompany } from '@/contexts/CompanyContext'
 import type { DraftTransaction } from '@/lib/types'
 import Link from 'next/link'
@@ -22,10 +22,7 @@ export default function TransactionsPage() {
   const { selectedCompanyId } = useCompany()
   const { data: transactions, isLoading } = useQuery<DraftTransaction[]>({
     queryKey: ['draft-transactions', selectedCompanyId],
-    queryFn: async () => {
-      const { data } = await apiClient.get('/draft-transactions')
-      return data
-    },
+    queryFn: () => fetchAll<DraftTransaction>('/draft-transactions'),
     enabled: Boolean(selectedCompanyId),
   })
 

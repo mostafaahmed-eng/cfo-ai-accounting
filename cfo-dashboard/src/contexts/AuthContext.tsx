@@ -40,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAuthError(null)
     } catch (err) {
       localStorage.removeItem('token')
+      localStorage.removeItem('refresh_token')
       setToken(null)
       setUser(null)
       if (axios.isAxiosError(err) && err.response) {
@@ -84,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       { timeout: 15000 }
     )
     localStorage.setItem('token', data.access_token)
+    localStorage.setItem('refresh_token', data.refresh_token)
     setToken(data.access_token)
     setUser(data.user)
     router.push('/dashboard')
@@ -96,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // ignore — token may already be invalid
     }
     localStorage.removeItem('token')
+    localStorage.removeItem('refresh_token')
     setToken(null)
     setUser(null)
     router.push('/')

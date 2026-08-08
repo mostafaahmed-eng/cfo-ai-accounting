@@ -12,6 +12,7 @@ from app.models.inbox_item import InboxItem
 from app.models.invitation import Invitation
 from app.models.journal import JournalEntry, JournalLine
 from app.models.notification import Notification
+from app.models.refresh_token import RefreshToken
 from app.models.telegram import (
     TelegramBotConfig,
     TelegramConnection,
@@ -40,6 +41,7 @@ __all__ = [
     "JournalEntry",
     "JournalLine",
     "Notification",
+    "RefreshToken",
     "TelegramBotConfig",
     "TelegramConnection",
     "TelegramPairing",

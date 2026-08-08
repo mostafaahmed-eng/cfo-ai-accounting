@@ -3,7 +3,7 @@
 import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import apiClient from '@/lib/api-client'
+import apiClient, { fetchAll } from '@/lib/api-client'
 import { useCompany } from '@/contexts/CompanyContext'
 import type { Vendor } from '@/lib/types'
 import { useState } from 'react'
@@ -16,10 +16,7 @@ export default function VendorsPage() {
 
   const { data: vendors, isLoading } = useQuery<Vendor[]>({
     queryKey: ['vendors', selectedCompanyId],
-    queryFn: async () => {
-      const { data } = await apiClient.get('/vendors')
-      return data
-    },
+    queryFn: () => fetchAll<Vendor>('/vendors'),
     enabled: Boolean(selectedCompanyId),
   })
 

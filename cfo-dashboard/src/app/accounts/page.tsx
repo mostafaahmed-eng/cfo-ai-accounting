@@ -3,7 +3,7 @@
 import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import apiClient from '@/lib/api-client'
+import apiClient, { fetchAll } from '@/lib/api-client'
 import { useCompany } from '@/contexts/CompanyContext'
 import type { Account } from '@/lib/types'
 import { useState } from 'react'
@@ -16,10 +16,7 @@ export default function AccountsPage() {
 
   const { data: accounts, isLoading } = useQuery<Account[]>({
     queryKey: ['accounts', selectedCompanyId],
-    queryFn: async () => {
-      const { data } = await apiClient.get('/accounts')
-      return data
-    },
+    queryFn: () => fetchAll<Account>('/accounts'),
     enabled: Boolean(selectedCompanyId),
   })
 

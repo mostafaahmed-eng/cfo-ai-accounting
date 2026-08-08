@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String
+from sqlalchemy import Column, SmallInteger, String
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import relationship
 
@@ -25,5 +25,8 @@ class User(BaseModel, TimestampMixin):
         nullable=False,
         server_default="active",
     )
+    # Bumped on password change to invalidate every previously issued
+    # access and refresh token (ver claim is compared against this).
+    token_version = Column(SmallInteger, nullable=False, default=0, server_default="0")
 
     memberships = relationship("CompanyMember", back_populates="user", lazy="noload")

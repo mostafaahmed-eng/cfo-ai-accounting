@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_company_id, get_current_user
 from app.models.audit_log import AuditLog
 from app.models.user import User
+from app.schemas.pagination import PageParams, get_page_params
 
 router = APIRouter()
 
@@ -15,17 +16,20 @@ async def list_audit_logs(
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100,
+    response: Response = None,
+    page: PageParams = Depends(get_page_params),
 ):
+    filters = (AuditLog.company_id == company_id,)
+    total = await db.scalar(select(func.count()).select_from(AuditLog).where(*filters))
     result = await db.execute(
         select(AuditLog)
-        .where(AuditLog.company_id == company_id)
+        .where(*filters)
         .order_by(AuditLog.created_at.desc())
-        .offset(skip)
-        .limit(limit)
+        .offset(page.offset)
+        .limit(page.limit)
     )
     logs = result.scalars().all()
+    response.headers["X-Total-Count"] = str(total)
     return [
         {
             "id": str(log.id),

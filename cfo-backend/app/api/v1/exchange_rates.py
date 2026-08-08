@@ -1,7 +1,7 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -10,6 +10,7 @@ from app.models.company import Company
 from app.models.exchange_rate import ExchangeRate
 from app.models.user import User
 from app.schemas.exchange_rate import ExchangeRateCreate, ExchangeRateResponse
+from app.schemas.pagination import PageParams, get_page_params
 
 router = APIRouter()
 
@@ -19,12 +20,21 @@ async def list_rates(
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
+    response: Response = None,
+    page: PageParams = Depends(get_page_params),
 ):
+    filters = (ExchangeRate.company_id == company_id,)
+    total = await db.scalar(
+        select(func.count()).select_from(ExchangeRate).where(*filters)
+    )
     result = await db.execute(
         select(ExchangeRate)
-        .where(ExchangeRate.company_id == company_id)
+        .where(*filters)
         .order_by(ExchangeRate.rate_date.desc())
+        .offset(page.offset)
+        .limit(page.limit)
     )
+    response.headers["X-Total-Count"] = str(total)
     return [ExchangeRateResponse.model_validate(r) for r in result.scalars().all()]
 
 

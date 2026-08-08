@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
-import apiClient from '@/lib/api-client'
+import apiClient, { fetchAll } from '@/lib/api-client'
 import type {
   CashFlowData,
   DashboardData,
@@ -49,10 +49,7 @@ export default function DashboardPage() {
 
   const { data: drafts } = useQuery<DraftTransaction[]>({
     queryKey: ['draft-transactions', selectedCompanyId],
-    queryFn: async () => {
-      const { data } = await apiClient.get('/draft-transactions')
-      return data
-    },
+    queryFn: () => fetchAll<DraftTransaction>('/draft-transactions'),
     enabled: isAuthenticated && companyReady,
   })
 

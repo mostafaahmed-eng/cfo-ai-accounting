@@ -3,10 +3,6 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
-class TelegramConnectRequest(BaseModel):
-    bot_token: str
-
-
 class TelegramBotConfigUpdate(BaseModel):
     bot_token: str
     bot_username: str = ""

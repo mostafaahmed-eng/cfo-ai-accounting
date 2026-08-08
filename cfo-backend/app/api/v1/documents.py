@@ -1,15 +1,26 @@
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.storage import storage_client
 from app.database import get_db
 from app.dependencies import get_current_company_id, get_current_user
+from app.limiter import ai_company_key, limiter
 from app.models.document import Document
 from app.models.user import User
 from app.schemas.document import DocumentResponse, DownloadURLResponse
+from app.services.audit import create_audit_log
 from app.services.document_intake import (
     DocumentStorageError,
     store_document_intake,
@@ -21,10 +32,14 @@ from app.services.document_processing import (
 from app.tasks.receipt_processing import process_receipt
 
 router = APIRouter()
+settings = get_settings()
 
 
 @router.post("/upload", response_model=DocumentResponse)
+@limiter.shared_limit(settings.RATE_LIMIT_AI, "ai-extraction", key_func=ai_company_key)
 async def upload_document(
+    request: Request,
+    response: Response,
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
@@ -62,6 +77,22 @@ async def upload_document(
 
     if stored.dispatch_processing:
         process_receipt.delay(str(stored.item.id), str(stored.document.id))
+    await create_audit_log(
+        db=db,
+        company_id=company_id,
+        user_id=str(user.id),
+        actor_type="user",
+        action="document.uploaded",
+        entity_type="document",
+        entity_id=str(stored.document.id),
+        after_data={
+            "original_name": stored.document.original_name,
+            "mime_type": stored.document.mime_type,
+            "size_bytes": stored.document.size_bytes,
+            "sha256_hash": stored.document.sha256_hash,
+            "document_type": stored.document.document_type,
+        },
+    )
     return DocumentResponse.model_validate(stored.document)
 
 
@@ -114,6 +145,22 @@ async def delete_document(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    before_data = {
+        "original_name": doc.original_name,
+        "storage_key": doc.storage_key,
+        "mime_type": doc.mime_type,
+        "size_bytes": doc.size_bytes,
+    }
     await storage_client.delete_file(doc.storage_key)
     await db.delete(doc)
+    await create_audit_log(
+        db=db,
+        company_id=company_id,
+        user_id=str(user.id),
+        actor_type="user",
+        action="document.deleted",
+        entity_type="document",
+        entity_id=doc_id,
+        before_data=before_data,
+    )
     return {"message": "Document deleted"}

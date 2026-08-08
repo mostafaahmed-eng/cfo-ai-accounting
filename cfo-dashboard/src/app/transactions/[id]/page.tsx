@@ -3,7 +3,7 @@
 import Sidebar from '@/components/layout/Sidebar'
 import Header from '@/components/layout/Header'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import apiClient from '@/lib/api-client'
+import apiClient, { fetchAll } from '@/lib/api-client'
 import type { Account, DraftTransaction, Vendor } from '@/lib/types'
 import { useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
@@ -56,19 +56,13 @@ export default function TransactionDetailPage() {
 
   const { data: accounts = [] } = useQuery<Account[]>({
     queryKey: ['accounts', selectedCompanyId],
-    queryFn: async () => {
-      const { data } = await apiClient.get('/accounts')
-      return data
-    },
+    queryFn: () => fetchAll<Account>('/accounts'),
     enabled: Boolean(selectedCompanyId),
   })
 
   const { data: vendors = [] } = useQuery<Vendor[]>({
     queryKey: ['vendors', selectedCompanyId],
-    queryFn: async () => {
-      const { data } = await apiClient.get('/vendors')
-      return data
-    },
+    queryFn: () => fetchAll<Vendor>('/vendors'),
     enabled: Boolean(selectedCompanyId),
   })
 
@@ -76,12 +70,10 @@ export default function TransactionDetailPage() {
     Array<{ validated_result: { category_hint?: string | null } | null }>
   >({
     queryKey: ['ai-extractions', selectedCompanyId, transaction?.inbox_item_id],
-    queryFn: async () => {
-      const { data } = await apiClient.get(
-        `/ai-extraction/${transaction?.inbox_item_id}`,
-      )
-      return data
-    },
+    queryFn: () =>
+      fetchAll<{
+        validated_result: { category_hint?: string | null } | null
+      }>(`/ai-extraction/${transaction?.inbox_item_id}`),
     enabled: Boolean(transaction?.inbox_item_id),
   })
 

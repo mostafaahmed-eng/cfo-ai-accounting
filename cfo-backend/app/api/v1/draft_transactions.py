@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -19,11 +19,20 @@ from app.schemas.draft_transaction import (
     DraftTransactionResponse,
     DraftTransactionUpdate,
 )
+from app.schemas.pagination import PageParams, get_page_params
 from app.services.audit import create_audit_log
 from app.services.draft_editing import DraftEditActor, edit_draft
 from app.services.journal import JournalError, create_journal_entry_from_draft
 
 router = APIRouter()
+
+DRAFT_EDIT_ROLES = ("OWNER", "ADMIN", "ACCOUNTANT")
+DRAFT_APPROVAL_ROLES = ("OWNER", "ADMIN", "APPROVER")
+REVIEWABLE_STATUS = "ready_for_review"
+
+
+def _membership_role(membership: CompanyMember) -> str:
+    return getattr(membership.role, "value", membership.role)
 
 
 @router.get("", response_model=list[DraftTransactionResponse])
@@ -31,12 +40,21 @@ async def list_drafts(
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
+    response: Response = None,
+    page: PageParams = Depends(get_page_params),
 ):
+    filters = (DraftTransaction.company_id == company_id,)
+    total = await db.scalar(
+        select(func.count()).select_from(DraftTransaction).where(*filters)
+    )
     result = await db.execute(
         select(DraftTransaction)
-        .where(DraftTransaction.company_id == company_id)
+        .where(*filters)
         .order_by(DraftTransaction.created_at.desc())
+        .offset(page.offset)
+        .limit(page.limit)
     )
+    response.headers["X-Total-Count"] = str(total)
     return [DraftTransactionResponse.model_validate(d) for d in result.scalars().all()]
 
 
@@ -67,8 +85,8 @@ async def update_draft(
     membership: CompanyMember = Depends(get_current_company_membership),
     db: AsyncSession = Depends(get_db),
 ):
-    membership_role = getattr(membership.role, "value", membership.role)
-    if membership_role not in ("OWNER", "ADMIN", "ACCOUNTANT"):
+    membership_role = _membership_role(membership)
+    if membership_role not in DRAFT_EDIT_ROLES:
         raise HTTPException(status_code=403, detail="Draft editing role required")
     draft = await edit_draft(
         db=db,
@@ -92,8 +110,8 @@ async def approve_draft(
     membership: CompanyMember = Depends(get_current_company_membership),
     db: AsyncSession = Depends(get_db),
 ):
-    membership_role = getattr(membership.role, "value", membership.role)
-    if membership_role not in ("OWNER", "ADMIN", "APPROVER"):
+    membership_role = _membership_role(membership)
+    if membership_role not in DRAFT_APPROVAL_ROLES:
         raise HTTPException(status_code=403, detail="Approval role required")
     result = await db.execute(
         select(DraftTransaction).where(
@@ -147,8 +165,11 @@ async def reject_draft(
     data: ClarificationRequest | None = None,
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
+    membership: CompanyMember = Depends(get_current_company_membership),
     db: AsyncSession = Depends(get_db),
 ):
+    if _membership_role(membership) not in DRAFT_APPROVAL_ROLES:
+        raise HTTPException(status_code=403, detail="Approval role required")
     result = await db.execute(
         select(DraftTransaction).where(
             DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id
@@ -157,6 +178,8 @@ async def reject_draft(
     draft = result.scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.status != REVIEWABLE_STATUS:
+        raise HTTPException(status_code=400, detail="Draft not ready for review")
     old_status = draft.status
     draft.status = "rejected"
     if draft.inbox_item_id:
@@ -186,8 +209,11 @@ async def request_clarification(
     data: ClarificationRequest,
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
+    membership: CompanyMember = Depends(get_current_company_membership),
     db: AsyncSession = Depends(get_db),
 ):
+    if _membership_role(membership) not in DRAFT_APPROVAL_ROLES:
+        raise HTTPException(status_code=403, detail="Approval role required")
     result = await db.execute(
         select(DraftTransaction).where(
             DraftTransaction.id == draft_id, DraftTransaction.company_id == company_id
@@ -196,6 +222,19 @@ async def request_clarification(
     draft = result.scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.status != REVIEWABLE_STATUS:
+        raise HTTPException(status_code=400, detail="Draft not ready for clarification")
     draft.status = "needs_clarification"
     await db.flush()
+    await create_audit_log(
+        db=db,
+        company_id=str(company_id),
+        user_id=str(user.id),
+        actor_type="user",
+        action="draft.clarification_requested",
+        entity_type="draft_transaction",
+        entity_id=str(draft.id),
+        before_data={"status": REVIEWABLE_STATUS},
+        after_data={"status": "needs_clarification"},
+    )
     return DraftTransactionResponse.model_validate(draft)

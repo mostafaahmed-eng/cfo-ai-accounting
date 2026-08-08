@@ -100,3 +100,8 @@ celerybeat.pid
 *.orig
 docker-compose.prod.override.yml
 
+# ===========================
+# Database dumps
+# ===========================
+*.sql
+

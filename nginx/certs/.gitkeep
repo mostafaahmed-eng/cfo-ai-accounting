@@ -1,0 +1,3 @@
+# Place your TLS material here when using nginx/nginx.ssl.conf.
+# Production users normally mount /etc/letsencrypt/live/<domain> instead
+# (set NGINX_CERT_DIR in .env) — do NOT commit real certificates/keys.

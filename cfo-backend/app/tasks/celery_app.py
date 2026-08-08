@@ -13,22 +13,14 @@ celery_app.autodiscover_tasks(
     [
         "app.tasks.receipt_processing",
         "app.tasks.ai_extraction",
-        "app.tasks.duplicate_detection",
         "app.tasks.telegram_responses",
-        "app.tasks.journal_posting",
-        "app.tasks.report_generation",
-        "app.tasks.notifications",
     ]
 )
 
 celery_app.conf.task_routes = {
     "app.tasks.receipt_processing.*": {"queue": "receipt-processing"},
     "app.tasks.ai_extraction.*": {"queue": "ai-extraction"},
-    "app.tasks.duplicate_detection.*": {"queue": "duplicate-detection"},
     "app.tasks.telegram_responses.*": {"queue": "telegram-responses"},
-    "app.tasks.journal_posting.*": {"queue": "journal-posting"},
-    "app.tasks.report_generation.*": {"queue": "report-generation"},
-    "app.tasks.notifications.*": {"queue": "notifications"},
 }
 
 celery_app.conf.update(

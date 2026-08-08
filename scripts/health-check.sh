@@ -20,9 +20,9 @@ echo ""
 
 # --- Backend ---
 echo "--- Backend ---"
-if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+if docker compose -f "$COMPOSE_FILE" exec -T backend curl -sf http://localhost:8000/health > /dev/null 2>&1; then
     log "Backend API: UP"
-    curl -s http://localhost:8000/health
+    docker compose -f "$COMPOSE_FILE" exec -T backend curl -s http://localhost:8000/health
     echo ""
 else
     fail "Backend API: DOWN"
@@ -32,7 +32,7 @@ fi
 # --- Frontend ---
 echo ""
 echo "--- Frontend ---"
-if curl -sf http://localhost:3000 > /dev/null 2>&1; then
+if docker compose -f "$COMPOSE_FILE" exec -T frontend wget -q --spider http://127.0.0.1:3000/ > /dev/null 2>&1; then
     log "Frontend: UP"
 else
     fail "Frontend: DOWN"
@@ -42,7 +42,7 @@ fi
 # --- Nginx ---
 echo ""
 echo "--- Nginx ---"
-if curl -sf http://localhost:80 > /dev/null 2>&1; then
+if docker compose -f "$COMPOSE_FILE" exec -T nginx wget -q --spider http://127.0.0.1:80/health > /dev/null 2>&1; then
     log "Nginx: UP"
 else
     fail "Nginx: DOWN"

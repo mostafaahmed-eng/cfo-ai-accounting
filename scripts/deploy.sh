@@ -41,23 +41,30 @@ log "Starting all services..."
 docker compose -f "$COMPOSE_FILE" up -d
 
 # --- Health check ---
-log "Waiting for services to become healthy..."
-sleep 10
-
+# The backend/frontend containers publish no host ports, so health checks run
+# inside the compose network via `docker compose exec` (reachable from this
+# script's context) instead of curling host ports.
+log "Waiting for backend to become healthy..."
 MAX_RETRIES=30
 RETRY_COUNT=0
-until curl -sf http://localhost:8000/health > /dev/null 2>&1; do
+until docker compose -f "$COMPOSE_FILE" exec -T backend curl -sf http://localhost:8000/health > /dev/null 2>&1; do
     RETRY_COUNT=$((RETRY_COUNT + 1))
     if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then
+        docker compose -f "$COMPOSE_FILE" ps
         error "Backend health check failed after ${MAX_RETRIES} attempts"
     fi
     warn "Waiting for backend... (${RETRY_COUNT}/${MAX_RETRIES})"
     sleep 2
 done
 
+# Recreate of the backend/frontend containers assigns new container IPs. nginx
+# resolves upstream hostnames at startup, so force it to re-resolve the current
+# addresses (graceful, no downtime).
+log "Refreshing nginx upstream DNS..."
+docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload > /dev/null 2>&1 \
+    || warn "nginx reload failed; stale upstream DNS may persist until the next restart"
+
+log "Running full health check..."
+bash scripts/health-check.sh
+
 log "Deployment complete!"
-log ""
-log "Service status:"
-docker compose -f "$COMPOSE_FILE" ps
-log ""
-log "Backend health: $(curl -s http://localhost:8000/health)"

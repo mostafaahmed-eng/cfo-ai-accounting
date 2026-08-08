@@ -1,13 +1,14 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_company_id, get_current_user
 from app.models.user import User
 from app.models.vendor import Vendor, VendorAlias
+from app.schemas.pagination import PageParams, get_page_params
 from app.schemas.vendor import (
     AliasCreate,
     AliasResponse,
@@ -28,12 +29,19 @@ async def list_vendors(
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
+    response: Response = None,
+    page: PageParams = Depends(get_page_params),
 ):
+    filters = (Vendor.company_id == company_id, Vendor.is_active)
+    total = await db.scalar(select(func.count()).select_from(Vendor).where(*filters))
     result = await db.execute(
         select(Vendor)
-        .where(Vendor.company_id == company_id, Vendor.is_active)
+        .where(*filters)
         .order_by(Vendor.name)
+        .offset(page.offset)
+        .limit(page.limit)
     )
+    response.headers["X-Total-Count"] = str(total)
     return [VendorResponse.model_validate(v) for v in result.scalars().all()]
 
 

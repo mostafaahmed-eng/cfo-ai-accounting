@@ -1,7 +1,7 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -14,6 +14,7 @@ from app.schemas.account import (
     AccountUpdate,
     ImportTemplateRequest,
 )
+from app.schemas.pagination import PageParams, get_page_params
 
 router = APIRouter()
 
@@ -23,10 +24,19 @@ async def list_accounts(
     user: User = Depends(get_current_user),
     company_id: str = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
+    response: Response = None,
+    page: PageParams = Depends(get_page_params),
 ):
+    filters = (Account.company_id == company_id,)
+    total = await db.scalar(select(func.count()).select_from(Account).where(*filters))
     result = await db.execute(
-        select(Account).where(Account.company_id == company_id).order_by(Account.code)
+        select(Account)
+        .where(*filters)
+        .order_by(Account.code)
+        .offset(page.offset)
+        .limit(page.limit)
     )
+    response.headers["X-Total-Count"] = str(total)
     return [AccountResponse.model_validate(a) for a in result.scalars().all()]
 
 

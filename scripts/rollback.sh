@@ -40,13 +40,22 @@ docker compose -f "$COMPOSE_FILE" run --rm backend alembic upgrade head
 log "Restarting all services..."
 docker compose -f "$COMPOSE_FILE" up -d
 
-sleep 10
+# Health check (exec-based: backend publishes no host port)
+MAX_RETRIES=30
+RETRY_COUNT=0
+until docker compose -f "$COMPOSE_FILE" exec -T backend curl -sf http://localhost:8000/health > /dev/null 2>&1; do
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then
+        docker compose -f "$COMPOSE_FILE" ps
+        error "Rollback failed! Backend health check failed after ${MAX_RETRIES} attempts."
+    fi
+    log "Waiting for backend... (${RETRY_COUNT}/${MAX_RETRIES})"
+    sleep 2
+done
 
-# Health check
-if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-    log "Rollback successful! Backend is healthy."
-else
-    error "Rollback failed! Backend health check failed."
-fi
+log "Refreshing nginx upstream DNS..."
+docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload > /dev/null 2>&1 \
+    || warn "nginx reload failed; stale upstream DNS may persist until the next restart"
 
-docker compose -f "$COMPOSE_FILE" ps
+log "Rollback successful! Backend is healthy."
+bash scripts/health-check.sh

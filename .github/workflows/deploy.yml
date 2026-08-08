@@ -59,10 +59,29 @@ jobs:
 
             docker compose -f docker-compose.prod.yml up -d
 
-            sleep 10
+            # Backend/frontend publish no host ports; check health inside the
+            # compose network via docker compose exec.
+            echo "Waiting for backend to become healthy..."
+            for i in $(seq 1 30); do
+              if docker compose -f docker-compose.prod.yml exec -T backend curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "Backend is healthy"
+                break
+              fi
+              echo "Waiting for backend... ($i/30)"
+              sleep 2
+              if [ "$i" -eq 30 ]; then
+                docker compose -f docker-compose.prod.yml ps
+                echo "ERROR: backend health check failed" >&2
+                exit 1
+              fi
+            done
+
+            # Force nginx to re-resolve upstream hostnames after service recreate.
+            docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload > /dev/null 2>&1 || \
+              echo "WARNING: nginx reload failed; stale upstream DNS may persist until restart"
 
             docker compose -f docker-compose.prod.yml ps
-            curl -f http://localhost:8000/health || exit 1
+            bash scripts/health-check.sh
           DEPLOY_EOF
 
       - name: Notify deployment
@@ -125,10 +144,26 @@ jobs:
 
             docker compose -f docker-compose.prod.yml up -d
 
-            sleep 15
+            echo "Waiting for backend to become healthy..."
+            for i in $(seq 1 30); do
+              if docker compose -f docker-compose.prod.yml exec -T backend curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "Backend is healthy"
+                break
+              fi
+              echo "Waiting for backend... ($i/30)"
+              sleep 2
+              if [ "$i" -eq 30 ]; then
+                docker compose -f docker-compose.prod.yml ps
+                echo "ERROR: backend health check failed" >&2
+                exit 1
+              fi
+            done
+
+            docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload > /dev/null 2>&1 || \
+              echo "WARNING: nginx reload failed; stale upstream DNS may persist until restart"
 
             docker compose -f docker-compose.prod.yml ps
-            curl -f http://localhost:8000/health || exit 1
+            bash scripts/health-check.sh
           DEPLOY_EOF
 
       - name: Post-deployment verification
@@ -142,7 +177,8 @@ jobs:
             docker compose -f docker-compose.prod.yml ps
 
             echo "=== Health Check ==="
-            curl -s http://localhost:8000/health
+            docker compose -f docker-compose.prod.yml exec -T backend curl -sf http://localhost:8000/health
+            echo ""
 
             echo "=== Recent Logs ==="
             docker compose -f docker-compose.prod.yml logs --tail=20 backend
@@ -176,5 +212,5 @@ jobs:
 
             sleep 10
             docker compose -f docker-compose.prod.yml ps
-            curl -f http://localhost:8000/health || exit 1
+            docker compose -f docker-compose.prod.yml exec -T backend curl -sf http://localhost:8000/health || exit 1
           ROLLBACK_EOF

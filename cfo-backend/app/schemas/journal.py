@@ -4,22 +4,6 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
-class JournalLineInput(BaseModel):
-    account_id: UUID
-    description: str | None = None
-    debit: float = 0
-    credit: float = 0
-
-
-class JournalEntryCreate(BaseModel):
-    entry_date: date
-    description: str
-    source_type: str
-    source_id: str | None = None
-    currency: str
-    lines: list[JournalLineInput]
-
-
 class JournalLineResponse(BaseModel):
     id: UUID
     account_id: UUID

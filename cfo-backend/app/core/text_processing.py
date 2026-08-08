@@ -2,7 +2,6 @@ import re
 
 ARABIC_RANGE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+")
 WESTERN_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
-ARABIC_DIGITS = str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")
 
 CURRENCY_SYMBOLS = {
     "$": "USD",
@@ -43,10 +42,6 @@ CURRENCY_KEYWORDS = {
 
 def normalize_arabic_digits(text: str) -> str:
     return text.translate(WESTERN_DIGITS)
-
-
-def normalize_western_digits(text: str) -> str:
-    return text
 
 
 def detect_language(text: str) -> str:

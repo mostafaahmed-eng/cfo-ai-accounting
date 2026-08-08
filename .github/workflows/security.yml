@@ -28,18 +28,40 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit
 
-      - name: Audit Python dependencies
+      - name: Audit Python runtime dependencies
         working-directory: cfo-backend
-        run: pip-audit -r <(pip freeze)
+        run: |
+          # Audit the actual runtime dependency tree (the same set installed by
+          # Dockerfile.prod: `pip install .` with no dev extras) in a clean venv.
+          # Auditing the runner's own `pip freeze` previously checked the wrong
+          # environment and produced meaningless results.
+          python -m venv /tmp/auditvenv
+          /tmp/auditvenv/bin/pip install --quiet --upgrade pip pip-audit
+          /tmp/auditvenv/bin/pip install --quiet --no-cache-dir .
+          /tmp/auditvenv/bin/pip freeze > /tmp/runtime-reqs.txt
+          /tmp/auditvenv/bin/pip-audit -r /tmp/runtime-reqs.txt
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Audit npm dependencies
+      # npm audit policy: fail the build on CRITICAL vulnerabilities in runtime
+      # dependencies (--omit=dev) so CI never silently swallows audit failures
+      # (previously `|| true`).
+      #
+      # Accepted exception (documented, tracked, NOT a global disable): the 7
+      # HIGH-severity advisories reported for Next.js 14 / its bundled postcss
+      # (GHSA-q4gf-8mx6-v5v3, GHSA-3g8h-86w9-wvmq, GHSA-ffhc-5mcf-pf4q,
+      # GHSA-vfv6-92ff-j949, GHSA-gx5p-jg67-6x7h, GHSA-h64f-5h5j-jqjh, ...).
+      # The only fix is a breaking major upgrade to next@16 (requires React 19),
+      # which is out of scope for the current batch. These same findings are
+      # still surfaced by the Trivy HIGH-severity docker-scan job below, and the
+      # next upgrade is tracked separately. There is no --force upgrade applied
+      # because the major bump is untested/breaking.
+      - name: Audit npm runtime dependencies
         working-directory: cfo-dashboard
-        run: npm audit --audit-level=high || true
+        run: npm audit --omit=dev --audit-level=critical
 
   docker-scan:
     runs-on: ubuntu-latest
@@ -105,6 +127,10 @@ jobs:
           fi
           if grep -rn "TELEGRAM_BOT_TOKEN=[0-9]" --include="*.py" --include="*.json" .; then
             echo "WARNING: Found hardcoded Telegram tokens in source code!"
+            exit 1
+          fi
+          if grep -rn "changeme123" --include="*.py" --include="*.md" --include="*.sh" .; then
+            echo "WARNING: Found the weak default admin password 'changeme123' in source code!"
             exit 1
           fi
           echo "No hardcoded secrets found."
